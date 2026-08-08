@@ -189,6 +189,82 @@ test("os tres workers compartilham a inteligencia multilíngue central por IPC",
   await manager.closeTeam(team.team.id);
 });
 
+test("escritas dos workers comparam diagnosticos antes e depois automaticamente", { timeout: 120_000 }, async (context) => {
+  const fixture = await createFixture();
+  const databasePath = path.join(fixture, "automatic-coordinator.sqlite");
+  const manager = new WorkerTeamManager({ projectRoot, databasePath, workerCount: 3 });
+  context.after(async () => {
+    await manager.stop();
+    await fs.rm(fixture, { recursive: true, force: true });
+  });
+  await fs.writeFile(path.join(fixture, "existing-error.js"), "export const oldValue = missingBefore;\nexport const edited = 1;\n");
+  await fs.writeFile(path.join(fixture, "new-error.js"), "export const edited = 1;\n");
+  await fs.writeFile(path.join(fixture, "notes.txt"), "antes\n");
+  await fs.mkdir(path.join(fixture, "source-dir"));
+  await fs.writeFile(path.join(fixture, "source-dir", "copied.js"), "export const copied = true;\n");
+
+  const team = await manager.createTeam({ projectPath: fixture, name: "Automatic intelligence" });
+  const unchangedOldError = await manager.assignTask({
+    teamId: team.team.id,
+    operation: "apply_patch",
+    params: { path: "existing-error.js", search: "edited = 1", replace: "edited = 2" }
+  });
+  const oldErrorResult = (await manager.waitForTasks({ taskIds: [unchangedOldError.id], timeoutMs: 60_000 })).tasks[0];
+  assert.equal(oldErrorResult.status, "concluido");
+  assert.equal(oldErrorResult.result.intelligence.status, "passed");
+  assert.equal(oldErrorResult.result.intelligence.diagnostics.newErrors, 0);
+  assert.ok(oldErrorResult.result.intelligence.diagnostics.unchanged >= 1);
+
+  const introducedError = await manager.assignTask({
+    teamId: team.team.id,
+    operation: "apply_patch",
+    params: { path: "new-error.js", search: "edited = 1", replace: "edited = missingAfter" }
+  });
+  const newErrorResult = (await manager.waitForTasks({ taskIds: [introducedError.id], timeoutMs: 60_000 })).tasks[0];
+  assert.equal(newErrorResult.status, "concluido");
+  assert.equal(newErrorResult.result.intelligence.status, "failed");
+  assert.ok(newErrorResult.result.intelligence.diagnostics.newErrors >= 1);
+  assert.match(await fs.readFile(path.join(fixture, "new-error.js"), "utf8"), /missingAfter/);
+
+  const textTask = await manager.assignTask({
+    teamId: team.team.id,
+    operation: "write_file",
+    params: { path: "notes.txt", content: "depois\n" }
+  });
+  const textResult = (await manager.waitForTasks({ taskIds: [textTask.id], timeoutMs: 30_000 })).tasks[0];
+  assert.equal(textResult.result.intelligence.status, "not_applicable");
+
+  const manifestTask = await manager.assignTask({
+    teamId: team.team.id,
+    operation: "write_file",
+    params: {
+      path: "package.json",
+      content: JSON.stringify({ name: "fixture-multilang", dependencies: { zod: "^3.25.0", express: "^4.22.2" } }, null, 2)
+    }
+  });
+  const manifestResult = (await manager.waitForTasks({ taskIds: [manifestTask.id], timeoutMs: 30_000 })).tasks[0];
+  assert.ok(manifestResult.result.intelligence.dependencyChanges.added.some((item) => item.name === "express"));
+
+  const copyTask = await manager.assignTask({
+    teamId: team.team.id,
+    operation: "copy_path",
+    params: { source: "source-dir", destination: "copied-dir", recursive: true }
+  });
+  const copyResult = (await manager.waitForTasks({ taskIds: [copyTask.id], timeoutMs: 30_000 })).tasks[0];
+  assert.equal(copyResult.result.intelligence.applicable, true);
+  assert.ok(copyResult.result.intelligence.createdFiles.includes("copied-dir/copied.js"));
+
+  const disabledTask = await manager.assignTask({
+    teamId: team.team.id,
+    operation: "write_file",
+    params: { path: "disabled.py", content: "return missing_disabled\n" },
+    intelligenceMode: "off"
+  });
+  const disabledResult = (await manager.waitForTasks({ taskIds: [disabledTask.id], timeoutMs: 30_000 })).tasks[0];
+  assert.equal(disabledResult.result.intelligence.status, "disabled");
+  await manager.closeTeam(team.team.id);
+});
+
 test("contrato MCP expoe as novas acoes sem criar tools duplicadas", async (context) => {
   const calls = [];
   const manager = {
@@ -211,4 +287,6 @@ test("contrato MCP expoe as novas acoes sem criar tools duplicadas", async (cont
   const response = await server._registeredTools.code_query.handler({ action: "languageCapabilities" });
   assert.equal(response.structuredContent.data.action, "languageCapabilities");
   assert.equal(calls.length, 1);
+  const workerSchema = server._registeredTools.assign_worker_task.inputSchema;
+  assert.equal(workerSchema.safeParse({ teamId: "team", operation: "write_file", params: {} }).data.intelligenceMode, "always");
 });

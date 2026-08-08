@@ -102,7 +102,7 @@ export class LspWorkspace {
       });
       await client.start({
         processId: process.pid,
-        clientInfo: { name: "mcp-worker-coordinator", version: "2.1.0" },
+        clientInfo: { name: "mcp-worker-coordinator", version: "2.2.0" },
         rootPath: this.projectRoot,
         rootUri: pathToFileURL(this.projectRoot).href,
         workspaceFolders: [{ uri: pathToFileURL(this.projectRoot).href, name: path.basename(this.projectRoot) }],

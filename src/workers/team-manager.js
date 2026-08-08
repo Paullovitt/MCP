@@ -4,6 +4,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { CoordinatorStore, TERMINAL_TASK_STATES } from "../storage/sqlite-store.js";
 import { CodeIntelligenceEngine } from "../code-intelligence/engine.js";
+import { AutomaticIntelligenceValidator } from "../code-intelligence/automatic-validator.js";
 import { findSnapshotChanges, snapshotPaths } from "./file-state.js";
 
 const SUPPORTED_OPERATIONS = new Set([
@@ -66,7 +67,7 @@ function errorObject(code, message, details = null) {
 }
 
 export class WorkerTeamManager {
-  constructor({ projectRoot, databasePath, logger, workerCount = 3, defaultTimeoutMs = 120_000, lockTtlMs = 30_000, codeIntelligenceEngine }) {
+  constructor({ projectRoot, databasePath, logger, workerCount = 3, defaultTimeoutMs = 120_000, lockTtlMs = 30_000, codeIntelligenceEngine, defaultIntelligenceMode = "always" }) {
     this.projectRoot = path.resolve(projectRoot);
     this.databasePath = databasePath || path.join(this.projectRoot, "data", "coordinator.sqlite");
     this.logger = logger;
@@ -76,6 +77,8 @@ export class WorkerTeamManager {
     this.workerScript = path.join(this.projectRoot, "src", "workers", "worker-process.js");
     this.store = new CoordinatorStore(this.databasePath);
     this.codeIntelligence = codeIntelligenceEngine || new CodeIntelligenceEngine({ logger });
+    this.defaultIntelligenceMode = defaultIntelligenceMode;
+    this.automaticIntelligence = new AutomaticIntelligenceValidator({ engine: this.codeIntelligence, logger });
     this.runtimes = new Map();
     this.retryTimers = new Map();
     this.mutationChain = Promise.resolve();
@@ -251,6 +254,7 @@ export class WorkerTeamManager {
       currentTaskId: null,
       pumping: false,
       lockRenewal: null,
+      intelligenceBaseline: null,
       closing: false,
       readyPromise
     };
@@ -524,6 +528,7 @@ export class WorkerTeamManager {
     clientTaskId = null,
     dependsOn = [],
     estimatedDurationMs,
+    intelligenceMode = this.defaultIntelligenceMode,
     initialStatus,
     scheduler = {},
     skipDependencyValidation = false
@@ -531,6 +536,7 @@ export class WorkerTeamManager {
     const team = this.store.getTeam(teamId);
     if (!team || team.status !== "ativo") throw new Error("Equipe inexistente ou inativa.");
     if (!SUPPORTED_OPERATIONS.has(operation)) throw new Error(`Operacao nao suportada: ${operation}`);
+    if (!["always", "auto", "off"].includes(intelligenceMode)) throw new Error("intelligenceMode deve ser always, auto ou off.");
 
     const estimate = this.estimateDuration(operation, params, estimatedDurationMs);
     const worker = workerId ? this.store.getWorker(workerId) : this.chooseWorker(teamId);
@@ -568,7 +574,8 @@ export class WorkerTeamManager {
       scheduler: {
         strategy: workerId ? "explicit_worker" : "least_estimated_load",
         estimatedDurationMs: estimate,
-        ...scheduler
+        ...scheduler,
+        intelligenceMode
       }
     });
 
@@ -821,6 +828,47 @@ export class WorkerTeamManager {
       }
     }, Math.max(100, Math.floor(this.lockTtlMs / 3)));
 
+    const intelligenceMode = task.scheduler?.intelligenceMode || this.defaultIntelligenceMode;
+    runtime.intelligenceBaseline = task.writePaths.length > 0
+      ? await this.automaticIntelligence.prepare(team.projectRoot, task.writePaths, intelligenceMode).catch((error) => ({
+        mode: intelligenceMode,
+        applicable: true,
+        status: "unavailable",
+        files: [],
+        durationMs: 0,
+        error: error.message
+      }))
+      : { mode: intelligenceMode, applicable: false, status: "not_applicable", files: [], durationMs: 0 };
+    if (runtime.intelligenceBaseline.applicable) {
+      this.addLog({
+        teamId: task.teamId,
+        workerId,
+        taskId: task.id,
+        level: runtime.intelligenceBaseline.error ? "warn" : "info",
+        event: "code_intelligence_preflight",
+        message: runtime.intelligenceBaseline.error ? "Preflight de codigo indisponivel; tarefa continuara." : "Preflight automatico de codigo concluido.",
+        data: {
+          mode: intelligenceMode,
+          files: runtime.intelligenceBaseline.files?.map((file) => file.file) || [],
+          durationMs: runtime.intelligenceBaseline.durationMs,
+          error: runtime.intelligenceBaseline.error || null
+        }
+      });
+    }
+    const latestTask = this.store.getTask(task.id);
+    if (latestTask?.cancelRequested) {
+      if (runtime.lockRenewal) clearInterval(runtime.lockRenewal);
+      runtime.lockRenewal = null;
+      runtime.intelligenceBaseline = null;
+      runtime.currentTaskId = null;
+      this.store.releaseLocks(task.id);
+      this.store.updateTask(task.id, { status: "cancelado", finishedAt: Date.now(), error: errorObject("canceled", "Tarefa cancelada durante o preflight de codigo.") });
+      this.store.updateWorker(workerId, { status: "aguardando", currentTaskId: null, error: null });
+      await this.releaseDependentTasks(task.teamId);
+      queueMicrotask(() => this.pumpWorker(workerId).catch(() => {}));
+      return;
+    }
+
     this.addLog({ teamId: task.teamId, workerId, taskId: task.id, level: "info", event: "task_dispatched", message: "Tarefa enviada ao processo worker.", data: { operation: task.operation } });
     runtime.child.send({
       type: "execute",
@@ -843,19 +891,44 @@ export class WorkerTeamManager {
   async completeTaskFromWorker(workerId, message) {
     const runtime = this.runtimes.get(workerId);
     if (!runtime) return;
-    if (runtime.lockRenewal) {
-      clearInterval(runtime.lockRenewal);
+    const task = this.store.getTask(message.taskId);
+    if (!task) {
+      if (runtime.lockRenewal) clearInterval(runtime.lockRenewal);
       runtime.lockRenewal = null;
+      runtime.intelligenceBaseline = null;
+      return;
     }
 
-    const task = this.store.getTask(message.taskId);
-    if (!task) return;
-    this.store.releaseLocks(task.id);
-
-    const rawResult = message.result ? { ...message.result } : null;
+    let rawResult = message.result ? { ...message.result } : null;
     const after = rawResult?.after || {};
     if (rawResult && "after" in rawResult) delete rawResult.after;
     const status = ["concluido", "erro", "cancelado", "timeout"].includes(message.status) ? message.status : "erro";
+    let intelligence = null;
+    try {
+      if (task.writePaths.length > 0) {
+        const team = this.store.getTeam(task.teamId);
+        if (team) {
+          intelligence = await this.automaticIntelligence.verify(team.projectRoot, task.writePaths, runtime.intelligenceBaseline);
+          rawResult = { ...(rawResult || {}), intelligence };
+        }
+      }
+    } catch (error) {
+      const team = this.store.getTeam(task.teamId);
+      if (team) this.codeIntelligence.invalidate(team.projectRoot, task.writePaths);
+      intelligence = {
+        mode: runtime.intelligenceBaseline?.mode || this.defaultIntelligenceMode,
+        applicable: true,
+        status: "unavailable",
+        verified: false,
+        error: error.message
+      };
+      rawResult = { ...(rawResult || {}), intelligence };
+    } finally {
+      if (runtime.lockRenewal) clearInterval(runtime.lockRenewal);
+      runtime.lockRenewal = null;
+      runtime.intelligenceBaseline = null;
+      this.store.releaseLocks(task.id);
+    }
     this.store.updateTask(task.id, {
       status,
       startedAt: message.startedAt || task.startedAt,
@@ -864,9 +937,22 @@ export class WorkerTeamManager {
       error: message.error || null,
       after
     });
-    if (task.writePaths.length > 0) {
-      const team = this.store.getTeam(task.teamId);
-      if (team) this.codeIntelligence.invalidate(team.projectRoot, task.writePaths);
+    if (intelligence?.applicable) {
+      this.addLog({
+        teamId: task.teamId,
+        workerId,
+        taskId: task.id,
+        level: ["failed", "unavailable"].includes(intelligence.status) ? "warn" : "info",
+        event: "code_intelligence_postflight",
+        message: intelligence.status === "failed" ? "Validacao automatica encontrou novos erros." : "Validacao automatica de codigo concluida.",
+        data: {
+          status: intelligence.status,
+          newErrors: intelligence.diagnostics?.newErrors || 0,
+          newWarnings: intelligence.diagnostics?.newWarnings || 0,
+          durationMs: intelligence.totalDurationMs || 0,
+          error: intelligence.error || null
+        }
+      });
     }
     if (status === "concluido" && message.finishedAt && (message.startedAt || task.startedAt)) {
       this.store.recordOperationDuration(task.operation, message.finishedAt - (message.startedAt || task.startedAt));
@@ -977,7 +1063,7 @@ export class WorkerTeamManager {
     });
   }
 
-  async sendInstruction({ teamId, workerId, taskId = null, message, operation = null, params = {}, readPaths = [], writePaths = [], lockPolicy = "wait", timeoutMs }) {
+  async sendInstruction({ teamId, workerId, taskId = null, message, operation = null, params = {}, readPaths = [], writePaths = [], lockPolicy = "wait", timeoutMs, intelligenceMode = this.defaultIntelligenceMode }) {
     const worker = this.store.getWorker(workerId);
     if (!worker || worker.teamId !== teamId) throw new Error("Worker nao encontrado na equipe.");
     const messageId = this.store.addMessage({ teamId, workerId, taskId, message, operation, params, createdAt: Date.now() });
@@ -986,7 +1072,7 @@ export class WorkerTeamManager {
 
     let followupTask = null;
     if (operation) {
-      followupTask = await this.assignTask({ teamId, workerId, operation, params, readPaths, writePaths, lockPolicy, timeoutMs });
+      followupTask = await this.assignTask({ teamId, workerId, operation, params, readPaths, writePaths, lockPolicy, timeoutMs, intelligenceMode });
     }
     return { messageId, followupTask };
   }

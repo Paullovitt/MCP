@@ -193,11 +193,12 @@ const workerTaskDefinitionSchema = z.object({
   writePaths: z.array(z.string()).optional().default([]),
   lockPolicy: z.enum(["wait", "reject"]).optional().default("wait"),
   timeoutMs: z.number().int().positive().max(600_000).optional(),
-  estimatedDurationMs: z.number().int().positive().max(600_000).optional()
+  estimatedDurationMs: z.number().int().positive().max(600_000).optional(),
+  intelligenceMode: z.enum(["always", "auto", "off"]).optional().default("always")
 });
 
 export function createMcpServer(projectRoot, teamManager) {
-  const server = new McpServer({ name: "MCP Worker Coordinator", version: "2.0.0" });
+  const server = new McpServer({ name: "MCP Worker Coordinator", version: "2.2.0" });
 
   registerJsonTool(
     server,
@@ -533,7 +534,7 @@ export function createMcpServer(projectRoot, teamManager) {
   registerDataTool(
     server,
     "assign_worker_task",
-    "Enfileira uma operacao estruturada para um worker especifico ou para o worker menos ocupado.",
+    "Enfileira uma operacao estruturada; escritas de codigo recebem preflight e validacao automatica por padrao.",
     {
       teamId: z.string(),
       workerId: z.string().optional(),
@@ -545,7 +546,8 @@ export function createMcpServer(projectRoot, teamManager) {
       writePaths: z.array(z.string()).optional().default([]),
       lockPolicy: z.enum(["wait", "reject"]).optional().default("wait"),
       timeoutMs: z.number().int().positive().max(600_000).optional(),
-      estimatedDurationMs: z.number().int().positive().max(600_000).optional()
+      estimatedDurationMs: z.number().int().positive().max(600_000).optional(),
+      intelligenceMode: z.enum(["always", "auto", "off"]).optional().default("always")
     },
     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     (input) => teamManager.assignTask(input)
@@ -620,7 +622,8 @@ export function createMcpServer(projectRoot, teamManager) {
       readPaths: z.array(z.string()).optional().default([]),
       writePaths: z.array(z.string()).optional().default([]),
       lockPolicy: z.enum(["wait", "reject"]).optional().default("wait"),
-      timeoutMs: z.number().int().positive().max(600_000).optional()
+      timeoutMs: z.number().int().positive().max(600_000).optional(),
+      intelligenceMode: z.enum(["always", "auto", "off"]).optional().default("always")
     },
     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     (input) => teamManager.sendInstruction(input)

@@ -114,7 +114,7 @@ export function locationFromOffset(projectRoot, fileName, content, start, length
 export function compactToBudget(result, maxChars = 20_000) {
   const arrays = [
     "symbols", "definitions", "references", "incomingCalls", "outgoingCalls", "imports", "dependentFiles",
-    "relatedSymbols", "relatedTests", "diagnostics", "files", "directories", "dependencies", "manifests"
+    "relatedSymbols", "relatedTests", "diagnostics", "files", "directories", "dependencies", "manifests", "impact"
   ];
   while (JSON.stringify(result).length > maxChars) {
     const candidate = arrays

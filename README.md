@@ -286,6 +286,22 @@ Cada sessao mantem versoes e snapshots incrementais. Escritas feitas pelas tools
 
 Os servidores sao iniciados sob demanda e encerrados ao fechar a ultima equipe do projeto. Pastas como `node_modules`, `.git`, builds, ambientes Python e cobertura sao ignoradas. A acao `installation` somente recomenda comandos e verifica ambientes; ela nunca instala ou altera dependencias automaticamente.
 
+### Validacao automatica das escritas
+
+Tarefas `write_file`, `apply_patch`, `copy_path`, `move_path`, `delete_path`, lotes e comandos mutantes usam `intelligenceMode: "always"` por padrao. O coordenador aplica a validacao somente a linguagens suportadas e manifests; imagens, logs e textos comuns nao pagam esse custo.
+
+Enquanto mantem o bloqueio do arquivo, o coordenador:
+
+1. coleta diagnosticos, simbolos e arquivos relacionados antes da escrita;
+2. executa a operacao no worker;
+3. invalida o indice central;
+4. coleta os diagnosticos depois;
+5. separa erros novos, resolvidos e antigos inalterados;
+6. compara alteracoes de dependencias e bibliotecas;
+7. inclui o resumo em `result.intelligence`.
+
+Os modos aceitos sao `always` (padrao), `auto` (mesma selecao automatica de providers) e `off`. Um erro antigo deslocado de linha nao e classificado como novo porque a comparacao usa arquivo, provider, codigo, categoria e mensagem. Quando aparece um erro novo, `result.intelligence.status` recebe `failed`; a escrita e preservada para permitir correcao, e o evento fica registrado nos logs. O worker nao inventa uma correcao sem instrucao do GPT.
+
 Consultar dependencias e comandos de instalacao:
 
 ```json
@@ -343,6 +359,7 @@ Aplicar um patch com bloqueio automatico:
     "search": "const oldValue = true;",
     "replace": "const oldValue = false;"
   },
+  "intelligenceMode": "always",
   "lockPolicy": "wait"
 }
 ```
@@ -493,7 +510,11 @@ Executar a suite automatizada:
 npm test
 ```
 
-Os testes criam projetos temporarios e validam contexto, definicao, referencias, completion, diagnosticos e invalidação para Python, C#, HTML/CSS e SQL. Tambem validam dependencias/instalacoes, o contrato das tools MCP e consultas simultaneas dos tres workers ao mesmo motor central. Nenhuma instalacao recomendada por `code_query` e executada durante os testes.
+Os testes criam projetos temporarios e validam contexto, definicao, referencias, completion, diagnosticos e invalidação para Python, C#, HTML/CSS e SQL. Tambem validam dependencias/instalacoes, o contrato das tools MCP, consultas simultaneas dos tres workers e comparacao automatica de erros antigos/novos depois de escritas. Nenhuma instalacao recomendada por `code_query` e executada durante os testes.
+
+### Benchmark da validacao automatica
+
+Em cinco rodadas no Windows com Node.js 24, tres escritas JavaScript paralelas levaram mediana de 95 ms com validacao desligada e 303 ms com a sessao aquecida em modo `always`: custo absoluto de 208 ms por lote. A inicializacao fria levou 699 ms. Operacoes sem escrita permaneceram no mesmo caminho rapido; seis tarefas de 600 ms obtiveram mediana de 1745 ms com tres workers e 4910 ms com um worker, speedup de 2,814x.
 
 ## Seguranca
 
