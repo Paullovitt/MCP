@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MCP Worker Coordinator</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="panel">
+      <header class="header">
+        <div>
+          <p class="eyebrow">mcp local · 3 workers</p>
+          <h1>Worker Coordinator</h1>
+          <p class="subtitle">Uma unica conversa do ChatGPT coordenando tres processos operacionais locais.</p>
+        </div>
+        <span class="status-pill" id="serverStatus">carregando</span>
+      </header>
+
+      <section class="grid" aria-label="configuracao do servidor">
+        <article class="card">
+          <span>porta unica</span>
+          <strong id="serverPort">4194</strong>
+        </article>
+        <article class="card">
+          <span>autenticacao</span>
+          <strong id="authMode">oauth</strong>
+        </article>
+        <article class="card wide">
+          <label for="mcpUrl">endpoint MCP local</label>
+          <div class="copy-row">
+            <input id="mcpUrl" readonly />
+            <button type="button" data-copy="mcpUrl">copiar</button>
+          </div>
+        </article>
+        <article class="card wide">
+          <label for="publicUrl">endpoint MCP publico</label>
+          <div class="copy-row">
+            <input id="publicUrl" readonly />
+            <button type="button" data-copy="publicUrl">copiar</button>
+          </div>
+          <small id="tunnelMessage"></small>
+        </article>
+        <article class="card wide">
+          <label for="oauthPassword">senha OAuth desta copia</label>
+          <div class="copy-row">
+            <input id="oauthPassword" type="password" readonly />
+            <button type="button" data-copy="oauthPassword">copiar</button>
+          </div>
+        </article>
+      </section>
+
+      <section class="workers-section">
+        <div class="section-title">
+          <div>
+            <p class="eyebrow">equipe ativa</p>
+            <h2>Workers</h2>
+          </div>
+          <button id="refreshButton" type="button">atualizar</button>
+        </div>
+        <div id="workers" class="workers-grid">
+          <p class="empty">Nenhuma equipe criada nesta execucao. Use a tool <code>create_worker_team</code> no ChatGPT.</p>
+        </div>
+      </section>
+
+      <section class="footer-info">
+        <p>Logs do servidor: <code>logs/server.log</code></p>
+        <p>Estado persistente: <code>data/coordinator.sqlite</code></p>
+        <p>O painel e a senha OAuth somente respondem pelo host local.</p>
+      </section>
+
+      <p id="errorMessage" class="error" hidden></p>
+    </main>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
