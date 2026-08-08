@@ -502,17 +502,7 @@ Erros temporarios de acesso ou permissao preservam o historico. O SQLite usa `se
 
 O indice de Code Intelligence permanece somente em memoria: codigo-fonte, ASTs e respostas estruturais nao sao gravados no SQLite. A sessao e descartada ao fechar a ultima equipe do projeto, apagar sua pasta ou encerrar o servidor.
 
-## Testes
-
-Executar a suite automatizada:
-
-```powershell
-npm test
-```
-
-Os testes criam projetos temporarios e validam contexto, definicao, referencias, completion, diagnosticos e invalidação para Python, C#, HTML/CSS e SQL. Tambem validam dependencias/instalacoes, o contrato das tools MCP, consultas simultaneas dos tres workers e comparacao automatica de erros antigos/novos depois de escritas. Nenhuma instalacao recomendada por `code_query` e executada durante os testes.
-
-### Benchmark da validacao automatica
+## Benchmark da validacao automatica
 
 Em cinco rodadas no Windows com Node.js 24, tres escritas JavaScript paralelas levaram mediana de 95 ms com validacao desligada e 303 ms com a sessao aquecida em modo `always`: custo absoluto de 208 ms por lote. A inicializacao fria levou 699 ms. Operacoes sem escrita permaneceram no mesmo caminho rapido; seis tarefas de 600 ms obtiveram mediana de 1745 ms com tres workers e 4910 ms com um worker, speedup de 2,814x.
 

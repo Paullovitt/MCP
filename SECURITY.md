@@ -78,7 +78,7 @@ Nao coloque senha OAuth, tokens ou conteudo do banco no README, em commits ou em
 
 1. Confirme que `git status` nao inclui arquivos em `data/`, `logs/` ou screenshots.
 2. Execute `npm audit`.
-3. Execute `npm test`.
+3. Execute `npm audit --omit=dev` e valide a inicializacao local com `npm start`.
 4. Confirme que o hostname publico e exclusivo desta aplicacao.
 5. Confirme que o tunel aponta apenas para `http://127.0.0.1:4194`.
 6. Revogue clientes/tokens removendo `data/oauth-store.json` quando necessario; uma nova autorizacao sera exigida.
