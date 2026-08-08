@@ -374,7 +374,7 @@ export class StructuralWorkspace {
       diagnostics: diagnostics.diagnostics,
       truncated: references.truncated,
       capabilities: this.mode === "csharp"
-        ? { semanticLevel: "structural", roslynActive: false, reason: "SDK .NET/Roslyn nao disponivel; simbolos, referencias, membros e estrutura continuam ativos." }
+        ? { semanticLevel: "structural", roslynActive: false, reason: "Roslyn nao esta integrado nesta versao e o computador tambem nao possui SDK .NET; simbolos, referencias, membros, variaveis e estrutura continuam ativos." }
         : { semanticLevel: "parser", dialect: input.dialect || "auto" },
       project: { sourceFiles: this.fileNames.length }
     }, input.maxChars || 20_000);

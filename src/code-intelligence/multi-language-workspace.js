@@ -165,7 +165,7 @@ export class MultiLanguageWorkspace {
       { language: "html", extensions: ["html", "htm"], provider: "vscode-html-language-server", semanticLevel: "language-server", active: Boolean(this.providers.html.client) },
       { language: "css", extensions: ["css", "scss", "less"], provider: "vscode-css-language-server", semanticLevel: "language-server", active: Boolean(this.providers.css.client) },
       { language: "sql", extensions: ["sql"], provider: "sql-structural-parser", semanticLevel: "parser/dialect", active: true },
-      { language: "csharp", extensions: ["cs"], provider: "csharp-structural-fallback", semanticLevel: "structural", active: true, limitation: "Roslyn requer SDK .NET, ausente neste computador." },
+      { language: "csharp", extensions: ["cs"], provider: "csharp-structural-fallback", semanticLevel: "structural", active: true, limitation: "Roslyn nao esta integrado nesta versao; um futuro adapter tambem exigira SDK .NET, ausente neste computador." },
       { language: "project/dependencies", extensions: [], provider: "project-intelligence", semanticLevel: "manifests/files/installations", active: true }
     ];
   }

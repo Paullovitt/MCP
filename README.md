@@ -41,7 +41,7 @@ A interface e `/api/status` aceitam somente acesso pelo host local. O endpoint M
 - npm;
 - um tunel HTTPS para cadastrar o MCP no ChatGPT, como Cloudflare Tunnel.
 
-Python e analisado pelo Pyright empacotado no projeto, sem exigir instalacao global. Para C#, a analise estrutural funciona imediatamente; analise Roslyn completa exige um SDK .NET instalado no computador.
+Python e analisado pelo Pyright empacotado no projeto, sem exigir instalacao global. Para C#, a analise estrutural funciona imediatamente. Roslyn nao esta integrado nesta versao e um futuro adapter tambem exigira um SDK .NET instalado no computador.
 
 O armazenamento usa o modulo SQLite nativo do Node.js. Nenhum pacote SQLite externo e necessario.
 
@@ -279,7 +279,7 @@ O `MultiLanguageWorkspace` escolhe automaticamente o provider pela extensao do a
 - HTML: VS Code HTML Language Server, incluindo simbolos, atributos, completion e diagnosticos;
 - CSS/SCSS/LESS: VS Code CSS Language Server;
 - SQL: parser estrutural com tabelas, colunas, views, procedures, referencias, completion e diagnosticos por dialeto (`sqlite`, `postgresql`, `mysql` ou `transactsql`);
-- C#: scanner estrutural para namespaces, classes, records, interfaces, metodos, propriedades, campos, referencias e completion. Roslyn completo e anunciado como inativo enquanto o SDK .NET estiver ausente;
+- C#: scanner estrutural para namespaces, classes, records, interfaces, metodos, propriedades, campos, variaveis, referencias e completion. Roslyn completo e anunciado como nao integrado, e o computador atual tambem nao possui SDK .NET;
 - Projeto: inventario de arquivos/pastas, manifests, linguagens, testes, arquivos relacionados, dependencias npm/pip/NuGet/web e comandos seguros de instalacao.
 
 Cada sessao mantem versoes e snapshots incrementais. Escritas feitas pelas tools ou workers invalidam os caminhos afetados imediatamente; alteracoes externas sao detectadas por tamanho e `mtimeNs`. Resultados possuem limites de itens/caracteres e informam truncamento.
