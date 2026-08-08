@@ -1,6 +1,6 @@
 {
   "name": "mcp-worker-coordinator",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "MCP local com OAuth e coordenador de tres workers operacionais para projetos no Windows.",
   "author": "Paulo Augusto",
   "license": "MIT",
@@ -8,7 +8,8 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning src/index.js",
-    "dev": "node --disable-warning=ExperimentalWarning --watch src/index.js"
+    "dev": "node --disable-warning=ExperimentalWarning --watch src/index.js",
+    "test": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1"
   },
   "keywords": [
     "mcp",
@@ -24,7 +25,10 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "express": "^4.22.2",
+    "node-sql-parser": "5.4.0",
+    "pyright": "1.1.411",
     "typescript": "6.0.3",
+    "vscode-langservers-extracted": "4.10.0",
     "zod": "^3.25.76"
   }
 }

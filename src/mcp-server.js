@@ -177,6 +177,9 @@ const codeLocationInputSchema = {
   file: z.string().optional(),
   line: z.number().int().positive().optional(),
   column: z.number().int().positive().optional(),
+  dialect: z.enum(["auto", "sqlite", "postgresql", "mysql", "transactsql"]).optional().default("auto"),
+  category: z.enum(["source", "test", "manifest", "config", "database", "web", "documentation", "other"]).optional(),
+  dependency: z.string().optional(),
   maxResults: z.number().int().positive().max(1000).optional().default(100)
 };
 
@@ -475,7 +478,7 @@ export function createMcpServer(projectRoot, teamManager) {
   registerDataTool(
     server,
     "code_context",
-    "Retorna contexto estrutural compacto de um simbolo: definicao, assinatura, referencias, chamadas, imports, dependentes, testes e diagnosticos.",
+    "Retorna contexto estrutural compacto e multilíngue de um simbolo: definicao, assinatura, referencias, chamadas, imports, dependentes, testes e diagnosticos.",
     {
       ...codeLocationInputSchema,
       maxReferences: z.number().int().positive().max(1000).optional().default(100),
@@ -491,11 +494,12 @@ export function createMcpServer(projectRoot, teamManager) {
   registerDataTool(
     server,
     "code_query",
-    "Consulta estrutural de codigo. Acoes: symbols, definition, references, hover, callHierarchy, imports e completion.",
+    "Consulta codigo, projeto e dependencias. Acoes semanticas: symbols, definition, references, hover, callHierarchy, imports e completion. Acoes de projeto: project, dependencies, installation, files, relatedFiles e languageCapabilities.",
     {
       ...codeLocationInputSchema,
-      action: z.enum(["symbols", "definition", "references", "hover", "callHierarchy", "imports", "completion"]),
-      query: z.string().optional()
+      action: z.enum(["symbols", "definition", "references", "hover", "callHierarchy", "imports", "completion", "project", "dependencies", "installation", "files", "relatedFiles", "languageCapabilities"]),
+      query: z.string().optional(),
+      maxChars: z.number().int().positive().max(100_000).optional().default(20_000)
     },
     { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     (input) => teamManager.codeQuery(input)
@@ -504,10 +508,11 @@ export function createMcpServer(projectRoot, teamManager) {
   registerDataTool(
     server,
     "code_diagnostics",
-    "Analisa erros sintaticos, semanticos e sugestoes do projeto ou de um arquivo usando o Language Service.",
+    "Analisa erros sintaticos, semanticos e estruturais em JavaScript/TypeScript, Python, C#, HTML/CSS e SQL.",
     {
       ...codeProjectInputSchema,
       file: z.string().optional(),
+      dialect: z.enum(["auto", "sqlite", "postgresql", "mysql", "transactsql"]).optional().default("auto"),
       includeSuggestions: z.boolean().optional().default(true),
       maxFiles: z.number().int().positive().max(1000).optional().default(100),
       maxResults: z.number().int().positive().max(2000).optional().default(200)

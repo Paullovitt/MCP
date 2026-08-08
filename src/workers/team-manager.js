@@ -111,7 +111,7 @@ export class WorkerTeamManager {
           await this.closeTeamInternal(team.id, { reason: "Pasta do projeto removida; equipe encerrada para limpar o historico." });
         }
         const deleted = this.store.deleteTeamHistory(team.id);
-        this.codeIntelligence.disposeProject(team.projectRoot);
+        await this.codeIntelligence.disposeProject(team.projectRoot);
         removed.push({ teamId: team.id, projectRoot: team.projectRoot, deleted });
         this.logger?.info("Historico removido porque a pasta do projeto nao existe mais.", { teamId: team.id, projectRoot: team.projectRoot, deleted });
       }
@@ -1058,7 +1058,7 @@ export class WorkerTeamManager {
     });
     this.addLog({ teamId, level: "info", event: "team_closed", message: reason, data: null });
     const sharedActiveProject = this.store.listTeams(10_000).some((candidate) => candidate.id !== teamId && candidate.status === "ativo" && candidate.projectRoot === team.projectRoot);
-    if (!sharedActiveProject) this.codeIntelligence.disposeProject(team.projectRoot);
+    if (!sharedActiveProject) await this.codeIntelligence.disposeProject(team.projectRoot);
     return this.getTeamStatus(teamId);
   }
 
@@ -1086,7 +1086,7 @@ export class WorkerTeamManager {
       await this.closeTeamInternal(teamId, { reason: "Coordenador encerrado." }).catch(() => {});
     }
     this.store.close();
-    this.codeIntelligence.close();
+    await this.codeIntelligence.close();
   }
 }
 

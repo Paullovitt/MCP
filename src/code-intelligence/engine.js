@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { TypeScriptWorkspace } from "./typescript-workspace.js";
+import { MultiLanguageWorkspace } from "./multi-language-workspace.js";
 
 export class CodeIntelligenceEngine {
   constructor({ logger, maxFiles = 5000 } = {}) {
@@ -15,9 +15,10 @@ export class CodeIntelligenceEngine {
     if (!stats?.isDirectory()) throw new Error(`Projeto de codigo nao encontrado: ${normalized}`);
     let session = this.sessions.get(normalized);
     if (!session) {
-      session = new TypeScriptWorkspace(normalized, { logger: this.logger, maxFiles: this.maxFiles });
+      // Uma sessao central roteia todas as linguagens e e compartilhada pelas tools MCP e pelos workers.
+      session = new MultiLanguageWorkspace(normalized, { logger: this.logger, maxFiles: this.maxFiles });
       this.sessions.set(normalized, session);
-      this.logger?.info("Sessao de Code Intelligence iniciada.", { projectRoot: normalized, provider: "typescript-language-service" });
+      this.logger?.info("Sessao de Code Intelligence iniciada.", { projectRoot: normalized, provider: "multi-language-code-intelligence" });
     }
     return session;
   }
@@ -42,22 +43,22 @@ export class CodeIntelligenceEngine {
     for (const session of this.sessions.values()) session.invalidate(paths);
   }
 
-  disposeProject(projectRoot) {
+  async disposeProject(projectRoot) {
     const normalized = path.resolve(projectRoot);
-    this.sessions.get(normalized)?.dispose();
+    await this.sessions.get(normalized)?.dispose();
     this.sessions.delete(normalized);
   }
 
-  close() {
-    for (const session of this.sessions.values()) session.dispose();
+  async close() {
+    await Promise.all([...this.sessions.values()].map((session) => session.dispose()));
     this.sessions.clear();
   }
 
   getStatus() {
     return {
-      provider: "typescript-language-service",
+      provider: "multi-language-code-intelligence",
       activeSessions: this.sessions.size,
-      projects: [...this.sessions.keys()]
+      projects: [...this.sessions.entries()].map(([projectRoot, session]) => ({ projectRoot, ...session.getStatus() }))
     };
   }
 }

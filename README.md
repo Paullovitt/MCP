@@ -17,7 +17,7 @@ Servidor unico http://127.0.0.1:4194
 Coordenador de tarefas
  (DAG + LPT/EWMA + locks R/W)
                               CodeIntelligenceEngine
-                              (TypeScript Language Service)
+                              (TS + LSP + SQL + projetos)
    |        |        |
 Worker 1 Worker 2 Worker 3
    \        |        /       /
@@ -41,9 +41,11 @@ A interface e `/api/status` aceitam somente acesso pelo host local. O endpoint M
 - npm;
 - um tunel HTTPS para cadastrar o MCP no ChatGPT, como Cloudflare Tunnel.
 
+Python e analisado pelo Pyright empacotado no projeto, sem exigir instalacao global. Para C#, a analise estrutural funciona imediatamente; analise Roslyn completa exige um SDK .NET instalado no computador.
+
 O armazenamento usa o modulo SQLite nativo do Node.js. Nenhum pacote SQLite externo e necessario.
 
-Dependencias npm principais: `@modelcontextprotocol/sdk`, `express`, `zod` e `typescript` 6.0.3 para o Language Service em processo. As versoes exatas ficam registradas em `package-lock.json`.
+Dependencias npm principais: `@modelcontextprotocol/sdk`, `express`, `zod`, `typescript` 6.0.3, `pyright`, `vscode-langservers-extracted` e `node-sql-parser`. As versoes exatas ficam registradas em `package-lock.json`.
 
 ## Instalacao
 
@@ -109,7 +111,7 @@ Quando `PUBLIC_MCP_URL` estiver configurada, o terminal mostra a URL e o status 
 - `src/workers/team-manager.js`: gerencia equipes, dependencias, scheduler, filas, processos, bloqueios e recuperacao;
 - `src/workers/worker-process.js`: executa operacoes estruturadas e pequenos lotes em cada worker;
 - `src/storage/sqlite-store.js`: persiste equipes, tarefas, metricas, logs e bloqueios no SQLite;
-- `src/code-intelligence/`: mantem o motor estrutural central, sessoes incrementais e adapter TypeScript/JavaScript;
+- `src/code-intelligence/`: mantem o roteador central, cliente LSP, sessoes incrementais, parsers estruturais e inteligencia de projeto/dependencias;
 - `src/tools/`: implementa filesystem, shell, Git, processos, npm, projeto e screenshot;
 - `scripts/start.bat` e `scripts/stop.bat`: iniciam, detectam e encerram a instancia Windows com seguranca.
 - `scripts/launch-hidden.js`: desacopla o processo Node da janela de inicializacao e redireciona sua saida para logs.
@@ -199,10 +201,10 @@ Cada equipe possui exatamente tres processos Node independentes.
 ## Tools de Code Intelligence
 
 - `code_context`: contexto composto de um simbolo, com definicao, assinatura, referencias, chamadas, imports, dependentes, testes, trecho e diagnosticos;
-- `code_query`: consulta pontual com as acoes `symbols`, `definition`, `references`, `hover`, `callHierarchy`, `imports` e `completion`;
+- `code_query`: consulta pontual com as acoes semanticas `symbols`, `definition`, `references`, `hover`, `callHierarchy`, `imports` e `completion`, alem de `project`, `dependencies`, `installation`, `files`, `relatedFiles` e `languageCapabilities`;
 - `code_diagnostics`: erros sintaticos, semanticos e sugestoes do projeto ou de um arquivo.
 
-As tres tools usam uma unica sessao incremental por projeto. O mesmo motor atende o MCP e requisicoes IPC dos workers; TypeScript nao e carregado tres vezes.
+As tres tools usam uma unica sessao incremental por projeto. O mesmo motor atende o MCP e requisicoes IPC dos workers; os Language Servers nao sao carregados tres vezes.
 
 ## Operacoes dos workers
 
@@ -270,11 +272,51 @@ Um worker usa a mesma inteligencia com `assign_worker_task`:
 
 ## Funcionamento do Code Intelligence
 
-O provider inicial e o TypeScript Language Service 6.0.3, fixado para preservar a API JavaScript em processo. Projetos com `tsconfig.json` ou `jsconfig.json` usam a configuracao existente; projetos sem configuracao recebem descoberta segura de JavaScript/TypeScript. `node_modules`, `.git`, builds e cobertura sao ignorados.
+O `MultiLanguageWorkspace` escolhe automaticamente o provider pela extensao do arquivo ou localiza um simbolo em todos os providers quando apenas o nome e informado:
+
+- JavaScript/TypeScript: TypeScript Language Service 6.0.3, com tipos, referencias, chamadas, completion e diagnosticos;
+- Python: Pyright Language Server, com inferencia de tipos, imports, completion, referencias e diagnosticos;
+- HTML: VS Code HTML Language Server, incluindo simbolos, atributos, completion e diagnosticos;
+- CSS/SCSS/LESS: VS Code CSS Language Server;
+- SQL: parser estrutural com tabelas, colunas, views, procedures, referencias, completion e diagnosticos por dialeto (`sqlite`, `postgresql`, `mysql` ou `transactsql`);
+- C#: scanner estrutural para namespaces, classes, records, interfaces, metodos, propriedades, campos, referencias e completion. Roslyn completo e anunciado como inativo enquanto o SDK .NET estiver ausente;
+- Projeto: inventario de arquivos/pastas, manifests, linguagens, testes, arquivos relacionados, dependencias npm/pip/NuGet/web e comandos seguros de instalacao.
 
 Cada sessao mantem versoes e snapshots incrementais. Escritas feitas pelas tools ou workers invalidam os caminhos afetados imediatamente; alteracoes externas sao detectadas por tamanho e `mtimeNs`. Resultados possuem limites de itens/caracteres e informam truncamento.
 
-O motor e organizado por adapter para permitir LSPs de outras linguagens no futuro sem mudar os contratos MCP. Nesta versao, arquivos fora de JavaScript/TypeScript continuam usando `search_files` e `read_file` como fallback.
+Os servidores sao iniciados sob demanda e encerrados ao fechar a ultima equipe do projeto. Pastas como `node_modules`, `.git`, builds, ambientes Python e cobertura sao ignoradas. A acao `installation` somente recomenda comandos e verifica ambientes; ela nunca instala ou altera dependencias automaticamente.
+
+Consultar dependencias e comandos de instalacao:
+
+```json
+{
+  "projectPath": "C:\\projetos\\aplicacao",
+  "action": "installation"
+}
+```
+
+Obter contexto de uma tabela SQL:
+
+```json
+{
+  "projectPath": "C:\\projetos\\aplicacao",
+  "file": "database/schema.sql",
+  "symbol": "users",
+  "dialect": "postgresql"
+}
+```
+
+Pedir completion Python:
+
+```json
+{
+  "projectPath": "C:\\projetos\\aplicacao",
+  "action": "completion",
+  "file": "src/service.py",
+  "line": 42,
+  "column": 18
+}
+```
 
 Enviar uma leitura ao Worker 1:
 
@@ -442,6 +484,16 @@ O banco continua centralizado em `data\coordinator.sqlite`, sem criar arquivos o
 Erros temporarios de acesso ou permissao preservam o historico. O SQLite usa `secure_delete` e o WAL e truncado depois da limpeza. As metricas EWMA globais permanecem porque nao contem caminho, conteudo nem identificacao do projeto.
 
 O indice de Code Intelligence permanece somente em memoria: codigo-fonte, ASTs e respostas estruturais nao sao gravados no SQLite. A sessao e descartada ao fechar a ultima equipe do projeto, apagar sua pasta ou encerrar o servidor.
+
+## Testes
+
+Executar a suite automatizada:
+
+```powershell
+npm test
+```
+
+Os testes criam projetos temporarios e validam contexto, definicao, referencias, completion, diagnosticos e invalidação para Python, C#, HTML/CSS e SQL. Tambem validam dependencias/instalacoes, o contrato das tools MCP e consultas simultaneas dos tres workers ao mesmo motor central. Nenhuma instalacao recomendada por `code_query` e executada durante os testes.
 
 ## Seguranca
 
