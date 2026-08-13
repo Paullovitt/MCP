@@ -1,6 +1,6 @@
 {
   "name": "mcp-worker-coordinator",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "MCP local com OAuth e coordenador de tres workers operacionais para projetos no Windows.",
   "author": "Paulo Augusto",
   "license": "MIT",

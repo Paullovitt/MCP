@@ -18,10 +18,11 @@ O usuario deve revisar comandos destrutivos antes de envia-los. Uma tarefa `run_
 
 ### Autenticacao
 
-- MCP aceita somente Bearer token emitido pelo OAuth local.
+- MCP aceita somente Bearer token emitido pelo OAuth e assinado com a chave compartilhada da instalacao.
 - Authorization code com PKCE S256.
-- `offline_access` e refresh tokens rotativos para manter a conexao sem reutilizar tokens antigos.
+- `offline_access` e refresh tokens assinados para manter a conexao ao alternar entre instalacoes autorizadas.
 - Senha OAuth gerada aleatoriamente por copia.
+- Chave de assinatura com pelo menos 32 caracteres, mantida fora do Git e derivada com SHA-256 da credencial do Cloudflare Tunnel quando a aplicacao inicia pelo script Windows.
 - Comparacao de senha com `crypto.timingSafeEqual`.
 - Bloqueio temporario depois de repetidas tentativas incorretas.
 - Redirect URI permitida somente com HTTPS ou HTTP em localhost.
@@ -64,13 +65,14 @@ Nao coloque senha OAuth, tokens ou conteudo do banco no README, em commits ou em
 
 ### Inicializacao Windows
 
-`scripts/stop.bat` exige correspondencia entre porta, PID, arquivo de runtime, raiz do projeto e linha de comando antes de encerrar um processo.
+`STOP MCP.bat` exige correspondencia entre porta, PID, arquivo de runtime, raiz do projeto e linha de comando antes de encerrar um processo.
 
 ## Riscos residuais
 
 - `run_shell` nao e uma sandbox. Um comando pode acessar caminhos externos mesmo que o coordenador valide os caminhos declarados.
 - O tunel HTTPS e a configuracao DNS ficam fora deste projeto e devem ser protegidos no provedor.
 - A senha OAuth aparece na interface local por necessidade operacional; qualquer pessoa com acesso a sessao do Windows pode ve-la.
+- Instalacoes que compartilham um dominio tambem compartilham `OAUTH_SHARED_TOKEN_SECRET`. A posse dessa chave permite validar ou emitir tokens, portanto ela deve ser transferida por um meio privado e protegida como uma senha.
 - SQLite nativo requer Node.js 24 ou superior.
 - A validade padrao do access token e longa para evitar reconexoes frequentes. Reduza `OAUTH_ACCESS_TOKEN_TTL_SECONDS` localmente se preferir rotacao mais frequente.
 
@@ -81,4 +83,4 @@ Nao coloque senha OAuth, tokens ou conteudo do banco no README, em commits ou em
 3. Execute `npm audit --omit=dev` e valide a inicializacao local com `npm start`.
 4. Confirme que o hostname publico e exclusivo desta aplicacao.
 5. Confirme que o tunel aponta apenas para `http://127.0.0.1:4194`.
-6. Revogue clientes/tokens removendo `data/oauth-store.json` quando necessario; uma nova autorizacao sera exigida.
+6. Para revogar todos os tokens compartilhados, gere um novo `OAUTH_SHARED_TOKEN_SECRET` em todas as instalacoes e autorize novamente. Remover apenas `data/oauth-store.json` nao revoga tokens assinados ainda validos.

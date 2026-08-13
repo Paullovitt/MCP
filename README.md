@@ -59,15 +59,15 @@ npm install
 Iniciar:
 
 ```text
-scripts\start.bat
+INICIAR MCP.bat
 ```
 
-Ao ser aberto por duplo clique, o script usa `scripts/launch-hidden.js` para iniciar o processo Node oculto e totalmente desacoplado da janela. Em seguida, aguarda o health check confirmar o funcionamento e fecha automaticamente a janela após exibir o resumo por um instante. O servidor continua ligado em segundo plano. Se uma instância válida já estiver ativa, o script apenas confirma o estado e também fecha; ele não reinicia nem encerra a instância existente.
+Ao ser aberto por duplo clique, o script inicia o processo Node oculto e desacoplado da janela. Em seguida, aguarda o health check confirmar o funcionamento e fecha automaticamente a janela após exibir o resumo por um instante. O servidor continua ligado em segundo plano. Se uma instância valida ja estiver ativa, o script apenas confirma o estado e tambem fecha; ele nao reinicia nem encerra a instancia existente.
 
 Parar com verificacao de identidade do processo:
 
 ```text
-scripts\stop.bat
+STOP MCP.bat
 ```
 
 O script de parada encerra o processo somente quando todas estas condicoes sao verdadeiras:
@@ -113,8 +113,7 @@ Quando `PUBLIC_MCP_URL` estiver configurada, o terminal mostra a URL e o status 
 - `src/storage/sqlite-store.js`: persiste equipes, tarefas, metricas, logs e bloqueios no SQLite;
 - `src/code-intelligence/`: mantem o roteador central, cliente LSP, sessoes incrementais, parsers estruturais e inteligencia de projeto/dependencias;
 - `src/tools/`: implementa filesystem, shell, Git, processos, npm, projeto e screenshot;
-- `scripts/start.bat` e `scripts/stop.bat`: iniciam, detectam e encerram a instancia Windows com seguranca.
-- `scripts/launch-hidden.js`: desacopla o processo Node da janela de inicializacao e redireciona sua saida para logs.
+- `INICIAR MCP.bat` e `STOP MCP.bat`: iniciam, detectam e encerram a instancia Windows com seguranca.
 
 Manter interface, MCP e OAuth no mesmo processo e na mesma porta reduz configuracao e pontos de falha. A interface continua isolada por `requireLocalRequest`, portanto um host separado para o painel nao e necessario no uso local atual.
 
@@ -132,6 +131,7 @@ Esse arquivo e ignorado pelo Git. Os campos principais sao:
 {
   "INSTALL_ID": "gerado_localmente",
   "OAUTH_LOGIN_PASSWORD": "gerada_localmente",
+  "OAUTH_SHARED_TOKEN_SECRET": "segredo_compartilhado_com_32_ou_mais_caracteres",
   "SERVER_PORT": 4194,
   "MCP_PORT": 4194,
   "WORKER_COUNT": 3,
@@ -141,7 +141,9 @@ Esse arquivo e ignorado pelo Git. Os campos principais sao:
 }
 ```
 
-Nao existe token estatico de compatibilidade. O endpoint MCP aceita somente access tokens emitidos pelo fluxo OAuth desta copia.
+Nao existe token estatico de compatibilidade. O endpoint MCP aceita somente access tokens emitidos pelo fluxo OAuth e assinados com `OAUTH_SHARED_TOKEN_SECRET`.
+
+`OAUTH_LOGIN_PASSWORD` pode ser diferente em cada computador. `OAUTH_SHARED_TOKEN_SECRET` deve ser igual em todas as instalacoes que alternam o mesmo dominio publico. Ao iniciar pelos scripts Windows, essa chave e derivada automaticamente da credencial do mesmo Cloudflare Tunnel e gravada apenas no `data/config.json` local.
 
 ## URL publica
 
@@ -157,6 +159,8 @@ A rota do tunel deve apontar para:
 mcp-workers.seu-dominio.com -> http://127.0.0.1:4194
 ```
 
+No Windows, os scripts procuram automaticamente em `C:\Cloudflared` o arquivo `.yml` ou `.yaml` que contem `hostname: mcp2.luckytrevo.com`. O nome do arquivo pode ser diferente em casa e no servico.
+
 Depois, defina `PUBLIC_MCP_URL` em `data/config.json`:
 
 ```json
@@ -169,7 +173,7 @@ Nao reutilize um hostname que ainda esteja apontando para outra aplicacao local.
 
 ## Cadastro no ChatGPT
 
-1. Inicie a aplicacao com `scripts\start.bat`.
+1. Inicie a aplicacao com `INICIAR MCP.bat`.
 2. Abra `http://127.0.0.1:4194` no navegador local.
 3. Confirme que o endpoint MCP publico aparece como configurado.
 4. No ChatGPT, abra as configuracoes de aplicativos ou conectores MCP.
@@ -180,7 +184,27 @@ Nao reutilize um hostname que ainda esteja apontando para outra aplicacao local.
 9. Na pagina de autorizacao, informe a senha OAuth mostrada apenas na interface local.
 10. Conclua a autorizacao e volte ao ChatGPT.
 
-O servidor implementa descoberta OAuth, registro dinamico de cliente, authorization code com PKCE S256, `offline_access`, refresh token com rotacao e Bearer access token.
+O servidor implementa descoberta OAuth, registro dinamico de cliente, authorization code com PKCE S256, `offline_access` e access/refresh tokens assinados.
+
+Referencia: [autenticacao de servidores MCP na documentacao oficial da OpenAI](https://developers.openai.com/plugins/build/auth).
+
+## Uso em casa e no servico sem reconectar
+
+Quando o mesmo dominio, como `https://mcp2.luckytrevo.com/mcp`, alterna entre dois computadores, as duas copias precisam usar a mesma chave de assinatura. Sem isso, o token criado no servico nao e reconhecido em casa e o ChatGPT pede a senha novamente.
+
+Faca a atualizacao uma unica vez:
+
+1. Atualize o projeto nos dois computadores com `git pull`.
+2. Pare o MCP nos dois computadores.
+3. Confirme que o YAML do Cloudflare nos dois computadores usa o mesmo tunel e contem a rota `hostname: mcp2.luckytrevo.com` com `credentials-file` configurado.
+4. Confirme que `PUBLIC_MCP_URL` e a mesma nas duas copias.
+5. Inicie apenas um dos computadores com `INICIAR MCP.bat`. O script deriva e salva a mesma chave nos dois ambientes sem exibi-la.
+6. Reconecte o MCP no ChatGPT uma ultima vez para receber os novos tokens assinados.
+7. Depois disso, pare uma instalacao antes de iniciar a outra. O mesmo token sera aceito nas duas.
+
+Se uma instalacao nao usar o script ou nao tiver `credentials-file`, sincronize manualmente apenas o valor de `OAUTH_SHARED_TOKEN_SECRET` nos dois arquivos `data/config.json`.
+
+Nao envie essa chave por chat, nao a coloque no README e nao a adicione ao Git. Nao e necessario copiar `OAUTH_LOGIN_PASSWORD`, `oauth-store.json` ou o banco SQLite. Alterar `OAUTH_SHARED_TOKEN_SECRET` revoga os tokens assinados anteriormente e exige uma nova autorizacao.
 
 ## Tools de coordenacao
 
