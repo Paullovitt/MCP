@@ -67,7 +67,7 @@ function errorObject(code, message, details = null) {
 }
 
 export class WorkerTeamManager {
-  constructor({ projectRoot, databasePath, logger, workerCount = 3, defaultTimeoutMs = 120_000, lockTtlMs = 30_000, codeIntelligenceEngine, defaultIntelligenceMode = "always" }) {
+  constructor({ projectRoot, databasePath, logger, workerCount = 3, defaultTimeoutMs = 86_400_000, lockTtlMs = 30_000, codeIntelligenceEngine, defaultIntelligenceMode = "always" }) {
     this.projectRoot = path.resolve(projectRoot);
     this.databasePath = databasePath || path.join(this.projectRoot, "data", "coordinator.sqlite");
     this.logger = logger;

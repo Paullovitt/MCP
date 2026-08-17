@@ -15,7 +15,7 @@ const CONFIG_DEFAULTS = {
   OAUTH_ACCESS_TOKEN_TTL_SECONDS: DEFAULT_OAUTH_ACCESS_TOKEN_TTL_SECONDS,
   OAUTH_REFRESH_TOKEN_TTL_SECONDS: DEFAULT_OAUTH_REFRESH_TOKEN_TTL_SECONDS,
   WORKER_COUNT: 3,
-  WORKER_TASK_TIMEOUT_MS: 120_000,
+  WORKER_TASK_TIMEOUT_MS: 86_400_000,
   FILE_LOCK_TTL_MS: 30_000
 };
 
@@ -111,7 +111,10 @@ function normalizeConfig(rawConfig, projectRoot) {
     changed = true;
   }
 
-  if (Number(config.WORKER_TASK_TIMEOUT_MS) < 1000) {
+  const workerTaskTimeoutMs = Number(config.WORKER_TASK_TIMEOUT_MS);
+  if (!Number.isFinite(workerTaskTimeoutMs)
+    || workerTaskTimeoutMs < 1000
+    || workerTaskTimeoutMs === 120_000) {
     config.WORKER_TASK_TIMEOUT_MS = CONFIG_DEFAULTS.WORKER_TASK_TIMEOUT_MS;
     changed = true;
   }

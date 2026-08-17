@@ -49,6 +49,7 @@ Nao coloque senha OAuth, tokens ou conteudo do banco no README, em commits ou em
 - Tarefas de terminal mutantes exigem `mutatesFiles: true` e `writePaths` declarados.
 - Cancelamento encerra a arvore do processo de comando.
 - Timeout encerra a arvore do processo de comando.
+- Comandos longos rodam de forma assincrona por no maximo 24 horas e continuam cancelaveis pelo `taskId`.
 - Falha de tarefa nao encerra o worker; a fila pode continuar.
 - Falha inesperada do processo worker libera bloqueios e tenta reiniciar o worker.
 

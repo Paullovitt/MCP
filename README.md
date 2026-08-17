@@ -209,6 +209,7 @@ Nao envie essa chave por chat, nao a coloque no README e nao a adicione ao Git. 
 ## Tools de coordenacao
 
 - `create_worker_team`
+- `run_shell_background`
 - `assign_worker_task`
 - `run_parallel_tasks`
 - `get_team_status`
@@ -221,6 +222,25 @@ Nao envie essa chave por chat, nao a coloque no README e nao a adicione ao Git. 
 - `close_worker_team`
 
 Cada equipe possui exatamente tres processos Node independentes.
+
+## Comandos longos sem o limite de 120 segundos
+
+`run_shell` continua sincrono e deve ser usado somente quando o comando normalmente termina em ate 90 segundos. O schema permite ate 10 minutos, mas uma chamada sincrona ainda pode expirar no cliente antes disso.
+
+Para treino, build, instalacao ou qualquer processo demorado, use `run_shell_background`. A tool responde imediatamente com `teamId`, `workerId` e `taskId`, enquanto o worker continua executando por ate 24 horas. O terminal nao precisa permanecer aberto, mas o servidor MCP deve continuar ligado.
+
+```json
+{
+  "projectPath": "C:\\caminho\\do\\projeto",
+  "command": "python treinar.py",
+  "cwd": ".",
+  "timeoutMs": 86400000,
+  "mutatesFiles": true,
+  "writePaths": ["resultados", "checkpoints"]
+}
+```
+
+Use `get_worker_result` com o `taskId` para consultar o estado e o resultado, `get_worker_logs` para acompanhar a saida e `cancel_worker_task` para interromper. A configuracao antiga de `120000` ms e migrada automaticamente para `86400000` ms na primeira inicializacao desta versao.
 
 ## Tools de Code Intelligence
 
