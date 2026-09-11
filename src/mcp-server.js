@@ -207,7 +207,7 @@ const workerTaskDefinitionSchema = z.object({
 });
 
 export function createMcpServer(projectRoot, teamManager) {
-  const server = new McpServer({ name: "MCP Worker Coordinator", version: "2.2.1" });
+  const server = new McpServer({ name: "MCP Worker Coordinator", version: "2.4.1" });
 
   registerJsonTool(
     server,

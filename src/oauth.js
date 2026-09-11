@@ -9,6 +9,7 @@ const AUTH_CODE_TTL_MS = 10 * 60 * 1000;
 const LOGIN_WINDOW_MS = 10 * 60 * 1000;
 const LOGIN_BLOCK_MS = 15 * 60 * 1000;
 const MAX_LOGIN_FAILURES = 8;
+const SIGNED_TOKEN_PREFIX = "mcp1";
 const loginAttempts = new Map();
 
 function randomToken(bytes = 32) {
@@ -17,6 +18,83 @@ function randomToken(bytes = 32) {
 
 function sha256Base64Url(value) {
   return crypto.createHash("sha256").update(value).digest("base64url");
+}
+
+function getTokenSigningKey(config) {
+  return crypto
+    .createHash("sha256")
+    .update(`mcp-worker-coordinator:${config.OAUTH_SHARED_TOKEN_SECRET}`)
+    .digest();
+}
+
+function createSignedToken(config, type, { clientId, resource, scope, issuedAt, expiresAt }) {
+  const payload = Buffer.from(JSON.stringify({
+    version: 1,
+    type,
+    client_id: clientId,
+    resource,
+    scope,
+    issued_at: Math.floor(issuedAt / 1000),
+    expires_at: Math.floor(expiresAt / 1000),
+    token_id: crypto.randomUUID()
+  })).toString("base64url");
+  const valueToSign = `${SIGNED_TOKEN_PREFIX}.${payload}`;
+  const signature = crypto.createHmac("sha256", getTokenSigningKey(config)).update(valueToSign).digest("base64url");
+
+  return `${valueToSign}.${signature}`;
+}
+
+function readSignedToken(config, token, expectedType) {
+  if (typeof token !== "string" || token.length > 8192) return null;
+
+  const [prefix, encodedPayload, encodedSignature, extra] = token.split(".");
+  if (prefix !== SIGNED_TOKEN_PREFIX || !encodedPayload || !encodedSignature || extra) return null;
+
+  const expectedSignature = crypto
+    .createHmac("sha256", getTokenSigningKey(config))
+    .update(`${prefix}.${encodedPayload}`)
+    .digest();
+  let receivedSignature;
+  try {
+    receivedSignature = Buffer.from(encodedSignature, "base64url");
+  } catch {
+    return null;
+  }
+  if (receivedSignature.length !== expectedSignature.length
+    || !crypto.timingSafeEqual(receivedSignature, expectedSignature)) {
+    return null;
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+
+  if (payload.version !== 1
+    || payload.type !== expectedType
+    || typeof payload.client_id !== "string"
+    || payload.client_id.length === 0
+    || payload.client_id.length > 512
+    || typeof payload.resource !== "string"
+    || typeof payload.scope !== "string"
+    || !normalizeScope(payload.scope)
+    || !Number.isSafeInteger(payload.issued_at)
+    || !Number.isSafeInteger(payload.expires_at)
+    || payload.issued_at > nowSeconds() + 60
+    || payload.expires_at <= payload.issued_at
+    || payload.expires_at <= nowSeconds()) {
+    return null;
+  }
+
+  return {
+    client_id: payload.client_id,
+    resource: payload.resource,
+    scope: payload.scope,
+    issuedAt: payload.issued_at * 1000,
+    expiresAt: payload.expires_at * 1000
+  };
 }
 
 function nowSeconds() {
@@ -187,6 +265,38 @@ function isRedirectUriAllowed(client, redirectUri) {
   return Array.isArray(client.redirect_uris) && client.redirect_uris.includes(redirectUri);
 }
 
+function canRecoverOAuthClient(query) {
+  return typeof query.client_id === "string"
+    && query.client_id.length > 0
+    && query.client_id.length <= 512
+    && !/\s/.test(query.client_id)
+    && query.response_type === "code"
+    && query.code_challenge_method === "S256"
+    && typeof query.code_challenge === "string"
+    && /^[A-Za-z0-9_-]{43}$/.test(query.code_challenge)
+    && isAllowedRedirectUri(query.redirect_uri);
+}
+
+async function recoverOAuthClient(config, store, query) {
+  if (!canRecoverOAuthClient(query)) return null;
+
+  const client = {
+    client_id: query.client_id,
+    client_secret: null,
+    client_id_issued_at: nowSeconds(),
+    redirect_uris: [query.redirect_uri],
+    client_name: "ChatGPT reconectado",
+    grant_types: ["authorization_code", "refresh_token"],
+    response_types: ["code"],
+    token_endpoint_auth_method: "none"
+  };
+
+  cleanupStore(store);
+  store.clients[client.client_id] = client;
+  await writeStore(config, store);
+  return client;
+}
+
 function renderAuthorizePage({ query, error = null }) {
   const hiddenFields = Object.entries(query)
     .map(([key, value]) => `<input type="hidden" name="${escapeHtml(key)}" value="${escapeHtml(String(value ?? ""))}" />`)
@@ -255,26 +365,47 @@ function normalizeScope(value) {
   return [...new Set(requested)].join(" ");
 }
 
-function issueTokenPair(config, store, { clientId, resource, scope }) {
+function issueTokenPair(config, store, {
+  clientId,
+  resource,
+  scope,
+  existingRefreshToken = null,
+  existingRefreshRecord = null
+}) {
   const issuedAt = nowMs();
-  const accessToken = randomToken(32);
-  const refreshToken = randomToken(48);
   const accessTtl = Number(config.OAUTH_ACCESS_TOKEN_TTL_SECONDS || 3600);
   const refreshTtl = Number(config.OAUTH_REFRESH_TOKEN_TTL_SECONDS || 63_072_000);
+  const accessExpiresAt = issuedAt + accessTtl * 1000;
+  const refreshIssuedAt = existingRefreshRecord?.issuedAt || issuedAt;
+  const refreshExpiresAt = existingRefreshRecord?.expiresAt || issuedAt + refreshTtl * 1000;
+  const accessToken = createSignedToken(config, "access", {
+    clientId,
+    resource,
+    scope,
+    issuedAt,
+    expiresAt: accessExpiresAt
+  });
+  const refreshToken = existingRefreshToken || createSignedToken(config, "refresh", {
+    clientId,
+    resource,
+    scope,
+    issuedAt: refreshIssuedAt,
+    expiresAt: refreshExpiresAt
+  });
 
   store.tokens[accessToken] = {
     client_id: clientId,
     resource,
     scope,
     issuedAt,
-    expiresAt: issuedAt + accessTtl * 1000
+    expiresAt: accessExpiresAt
   };
   store.refreshTokens[refreshToken] = {
     client_id: clientId,
     resource,
     scope,
-    issuedAt,
-    expiresAt: issuedAt + refreshTtl * 1000
+    issuedAt: refreshIssuedAt,
+    expiresAt: refreshExpiresAt
   };
 
   return {
@@ -374,7 +505,11 @@ export function createOAuthRouter(config) {
 
   router.get("/oauth/authorize", async (request, response) => {
     const store = await readStore(config);
-    const client = store.clients[request.query.client_id];
+    let client = store.clients[request.query.client_id];
+
+    if (!client) {
+      client = await recoverOAuthClient(config, store, request.query);
+    }
 
     if (!client || !isRedirectUriAllowed(client, request.query.redirect_uri)) {
       response.status(400).send("Cliente OAuth ou redirect_uri invalido.");
@@ -466,7 +601,28 @@ export function createOAuthRouter(config) {
     const store = await readStore(config);
     cleanupStore(store);
     const { clientId, clientSecret } = getClientAuth(request);
-    const client = store.clients[clientId];
+    const previousRefreshToken = grantType === "refresh_token" ? request.body.refresh_token : null;
+    const signedRefreshRecord = previousRefreshToken
+      ? readSignedToken(config, previousRefreshToken, "refresh")
+      : null;
+    const storedRefreshRecord = previousRefreshToken ? store.refreshTokens[previousRefreshToken] : null;
+    const refreshRecord = signedRefreshRecord || storedRefreshRecord;
+    let client = store.clients[clientId];
+
+    // Outra instalacao com a mesma chave pode renovar um token de cliente publico
+    // mesmo sem possuir a copia local do registro dinamico do ChatGPT.
+    if (!client
+      && grantType === "refresh_token"
+      && signedRefreshRecord
+      && signedRefreshRecord.client_id === clientId
+      && !clientSecret) {
+      client = {
+        client_id: clientId,
+        client_secret: null,
+        grant_types: ["refresh_token"],
+        token_endpoint_auth_method: "none"
+      };
+    }
 
     if (!client) {
       oauthError(response, 401, "invalid_client", "Cliente OAuth invalido.");
@@ -484,8 +640,6 @@ export function createOAuthRouter(config) {
     }
 
     if (grantType === "refresh_token") {
-      const previousRefreshToken = request.body.refresh_token;
-      const refreshRecord = store.refreshTokens[previousRefreshToken];
       if (!refreshRecord || refreshRecord.expiresAt <= nowMs() || refreshRecord.client_id !== clientId) {
         oauthError(response, 400, "invalid_grant", "Refresh token invalido ou expirado.");
         return;
@@ -502,11 +656,15 @@ export function createOAuthRouter(config) {
         return;
       }
 
-      delete store.refreshTokens[previousRefreshToken];
+      if (!signedRefreshRecord) {
+        delete store.refreshTokens[previousRefreshToken];
+      }
       const tokenPair = issueTokenPair(config, store, {
         clientId,
         resource: refreshRecord.resource,
-        scope: requestedScope
+        scope: requestedScope,
+        existingRefreshToken: signedRefreshRecord ? previousRefreshToken : null,
+        existingRefreshRecord: signedRefreshRecord ? refreshRecord : null
       });
       await writeStore(config, store);
       response.json(tokenPair);
@@ -545,6 +703,16 @@ export function createOAuthRouter(config) {
 export async function isValidOAuthAccessToken(config, token) {
   if (!token) {
     return false;
+  }
+
+  const signedRecord = readSignedToken(config, token, "access");
+  if (signedRecord) {
+    const expectedResource = normalizeMcpUrl(config.PUBLIC_MCP_URL);
+    try {
+      return !expectedResource || normalizeMcpUrl(signedRecord.resource) === expectedResource;
+    } catch {
+      return false;
+    }
   }
 
   const store = await readStore(config);

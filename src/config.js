@@ -28,6 +28,15 @@ function createLoginPassword() {
   return crypto.randomBytes(18).toString("base64url");
 }
 
+function createSharedTokenSecret() {
+  return crypto.randomBytes(32).toString("base64url");
+}
+
+function getRuntimeSharedTokenSecret() {
+  const value = process.env.MCP_OAUTH_SHARED_TOKEN_SECRET?.trim();
+  return value || null;
+}
+
 export function getConfigPath(projectRoot = process.cwd()) {
   return path.join(projectRoot, "data", "config.json");
 }
@@ -80,6 +89,19 @@ function normalizeConfig(rawConfig, projectRoot) {
     changed = true;
   }
 
+  const runtimeSharedTokenSecret = getRuntimeSharedTokenSecret();
+  if (runtimeSharedTokenSecret && config.OAUTH_SHARED_TOKEN_SECRET !== runtimeSharedTokenSecret) {
+    config.OAUTH_SHARED_TOKEN_SECRET = runtimeSharedTokenSecret;
+    changed = true;
+  } else if (!config.OAUTH_SHARED_TOKEN_SECRET) {
+    config.OAUTH_SHARED_TOKEN_SECRET = createSharedTokenSecret();
+    changed = true;
+  }
+
+  if (typeof config.OAUTH_SHARED_TOKEN_SECRET !== "string" || config.OAUTH_SHARED_TOKEN_SECRET.length < 32) {
+    throw new Error("OAUTH_SHARED_TOKEN_SECRET deve conter pelo menos 32 caracteres.");
+  }
+
   if (Number(config.OAUTH_ACCESS_TOKEN_TTL_SECONDS) < DEFAULT_OAUTH_ACCESS_TOKEN_TTL_SECONDS) {
     config.OAUTH_ACCESS_TOKEN_TTL_SECONDS = DEFAULT_OAUTH_ACCESS_TOKEN_TTL_SECONDS;
     changed = true;
@@ -90,7 +112,10 @@ function normalizeConfig(rawConfig, projectRoot) {
     changed = true;
   }
 
-  if (Number(config.WORKER_TASK_TIMEOUT_MS) < 1000) {
+  const workerTaskTimeoutMs = Number(config.WORKER_TASK_TIMEOUT_MS);
+  if (!Number.isFinite(workerTaskTimeoutMs)
+    || workerTaskTimeoutMs < 1000
+    || workerTaskTimeoutMs === 120_000) {
     config.WORKER_TASK_TIMEOUT_MS = CONFIG_DEFAULTS.WORKER_TASK_TIMEOUT_MS;
     changed = true;
   }
@@ -135,6 +160,7 @@ export async function loadOrCreateConfig(projectRoot = process.cwd()) {
   const config = {
     INSTALL_ID: createInstallId(),
     OAUTH_LOGIN_PASSWORD: createLoginPassword(),
+    OAUTH_SHARED_TOKEN_SECRET: getRuntimeSharedTokenSecret() || createSharedTokenSecret(),
     ...CONFIG_DEFAULTS,
     PROJECT_ROOT: absoluteRoot,
     createdAt: now,

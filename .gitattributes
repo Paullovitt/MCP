@@ -1,0 +1,2 @@
+# O cmd.exe precisa de CRLF nos iniciadores Windows, inclusive apos clonar o Git.
+*.bat text eol=crlf

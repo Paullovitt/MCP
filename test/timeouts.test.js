@@ -38,6 +38,11 @@ test("configuracao nova usa 24 horas e preserva prazos explicitos existentes", a
   assert.equal(loaded.WORKER_TASK_TIMEOUT_MS, 4500);
   assert.equal(loaded.OAUTH_LOGIN_PASSWORD, initial.OAUTH_LOGIN_PASSWORD);
   assert.equal(loaded.INSTALL_ID, initial.INSTALL_ID);
+  // A migracao recebida do GitHub reconhece especificamente o antigo padrao de 120s.
+  await fs.writeFile(configPath, JSON.stringify({ ...loaded, WORKER_TASK_TIMEOUT_MS: 120_000 }));
+  const migrated = await loadOrCreateConfig(directory);
+  assert.equal(migrated.WORKER_TASK_TIMEOUT_MS, dayMs);
+  assert.equal(migrated.OAUTH_SHARED_TOKEN_SECRET, loaded.OAUTH_SHARED_TOKEN_SECRET);
 });
 
 test("shell interno usa dez minutos e termina assim que o comando acaba", async (t) => {
