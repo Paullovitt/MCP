@@ -1,6 +1,6 @@
 # Referencia do terminal persistente
 
-Versao 2.5.0 · Paulo Augusto · 2026 · [Licenca MIT](../LICENSE).
+Versao 2.5.1 · Paulo Augusto · 2026 · [Licenca MIT](../LICENSE).
 
 Este guia descreve o contrato implementado em [src/terminal](../src/terminal), sem substituir a [visao geral do projeto](../README.md). O objetivo e manter processos interativos com estado entre chamadas MCP. Nao e interface grafica, modelo de autocomplete ou substituto dos workers.
 
@@ -21,7 +21,7 @@ O resultado de sucesso contem o mesmo objeto em `structuredContent` e em `conten
 
 `sessionId` tem formato `term_` seguido de UUID e deve ser o valor retornado por `terminal_start`. Um ID encerrado nunca e reutilizado. As tools de leitura nao compartilham nem avancam um cursor global: cada consumidor guarda seu proprio offset.
 
-Erros de schema/execucao sao retornados como erro da tool pelo SDK MCP; confira `isError` antes de consumir `structuredContent.data`. Falhas de rede/OAuth/transporte sao independentes. Metadados de uma sessao retida podem apresentar `errorCode`.
+Confira `isError` antes de consumir `structuredContent.data`. Erros operacionais retornam `{data: null, error: {code, message}}` em `structuredContent`, sem stack; exemplos: `SESSION_NOT_FOUND`, `SESSION_NOT_RUNNING`, `CWD_NOT_FOUND` e `TERMINAL_ERROR`. Falhas nativas preservam seus codigos PTY. Erros de schema seguem o formato do SDK MCP; rede/OAuth/transporte sao independentes. Metadados de uma sessao retida podem apresentar `errorCode`.
 
 ### terminal_start
 
@@ -157,6 +157,8 @@ try {
 O teste de documentacao extrai e executa esse bloco. Para integrar outro modulo, crie um unico `TerminalSessionManager` no bootstrap, injete-o em `startMcpHttpServer`/`createMcpServer` e chame `stop()` no shutdown; nao crie managers diferentes por requisicao. O bootstrap atual ja faz essa integracao. O construtor aceita `{projectRoot, logger, config}`; logger e opcional e config usa os campos `TERMINAL_*`.
 
 ## Atualizacao e operacao
+
+Na 2.5.1, os scripts Windows pedem shutdown normal por canal local protegido e aguardam ate 15 segundos antes de forcar a arvore. O MCP bloqueia novas requisicoes, fecha terminais, cancela shells diretos e para workers/HTTP. A credencial efemera fica somente em `data/runtime.json`; nao e senha OAuth e nunca deve ser publicada. Instancias antigas usam fallback. Logs de lifecycle incluem `forced_termination` quando necessario, sem registrar entrada/saida.
 
 1. Finalize/cancele tarefas e feche terminais que nao podem ser interrompidos. Guarde arquivos de trabalho; estado de REPL nao e salvo.
 2. Confira `git status` e preserve alteracoes locais. Nao use reset forcado nem apague `data/` para atualizar.

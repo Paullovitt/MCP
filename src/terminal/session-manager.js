@@ -113,7 +113,7 @@ export class TerminalSessionManager {
   get(sessionId) {
     terminalSessionId.parse(sessionId);
     const session = this.sessions.get(sessionId);
-    if (!session) throw new Error("Sessao de terminal inexistente ou expirada.");
+    if (!session) throw Object.assign(new Error("Sessao de terminal inexistente ou expirada."), { code: "SESSION_NOT_FOUND" });
     return session;
   }
 

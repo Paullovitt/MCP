@@ -10,7 +10,7 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const run = promisify(execFile);
 
 test("documentacao possui links locais validos e os sete contratos de terminal", async () => {
-  for (const file of ["README.md", "SECURITY.md", "CHANGELOG.md", "docs/TERMINAL.md"]) {
+  for (const file of ["README.md", "SECURITY.md", "CHANGELOG.md", "docs/TERMINAL.md", "README_DESKTOP_COMMANDER_REFERENCE.md"]) {
     const content = await fs.readFile(path.join(root, file), "utf8");
     // Verifica referencias de arquivos, sem depender de rede nem executar exemplos de comandos destrutivos.
     for (const match of content.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)) {

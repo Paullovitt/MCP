@@ -66,6 +66,10 @@ Nao coloque senha OAuth, tokens ou conteudo do banco no README, em commits ou em
 
 ### Inicializacao Windows
 
+Desde 2.5.1 os dois scripts reutilizam `scripts/stop-server.ps1`: primeiro solicitam cleanup normal, aguardam ate 15 segundos e so entao forcam a arvore, revalidando identidade do PID. `/api/shutdown` exige segredo aleatorio efemero, Host e peer loopback, sem Origin ou cabecalhos de proxy. O segredo fica no runtime ignorado pelo Git, com permissao solicitada 0600; no Windows a protecao efetiva depende das ACLs da conta/pasta. Nao concede isolamento contra outros processos da mesma conta. Nao envie esse segredo pelo dominio publico.
+
+O shell direto limita stdout/stderr a 512 KiB por stream e sinaliza descarte do inicio; timeout/shutdown tentam encerrar descendentes. Programas deliberadamente destacados ou servicos continuam fora da garantia de cleanup.
+
 `STOP MCP.bat` verifica a identidade do Node dono da porta por linha de comando e runtime ou `INSTALL_ID` local. Ele tambem tenta parar o tunel Cloudflare do YAML, mesmo se a verificacao do MCP falhar. `scripts/stop.bat` para somente o MCP, confirmando runtime/linha de comando ou identidade local. Consulte o README antes de escolher o iniciador.
 
 ### Terminal persistente

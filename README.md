@@ -4,7 +4,17 @@ Aplicacao local em Node.js que conecta uma unica conversa do ChatGPT a tres proc
 
 O ChatGPT continua sendo o unico componente inteligente. Os workers nao usam modelos, OpenAI API, Ollama, LM Studio ou outros agentes. Eles apenas executam operacoes estruturadas decididas pelo GPT.
 
-Versao atual: **2.5.0**. Consulte o [guia completo do terminal](docs/TERMINAL.md), o [historico de alteracoes](CHANGELOG.md) e a [politica de seguranca](SECURITY.md).
+Versao atual: **2.5.1**. Consulte o [guia completo do terminal](docs/TERMINAL.md), o [historico de alteracoes](CHANGELOG.md), a [politica de seguranca](SECURITY.md) e a [referencia para Desktop Commander](README_DESKTOP_COMMANDER_REFERENCE.md).
+
+### Melhorias da 2.5.1
+
+- Shell direto: conserva os ultimos 512 KiB de stdout e 512 KiB de stderr, informando truncamento e total de bytes. Vale tambem para wrappers que usam `runShellCommand`; os workers mantem sua implementacao independente.
+- Timeout e shutdown encerram a arvore do comando, com `canceled` distinto de `timedOut` e `errorCode` se o encerramento falhar. Nao ha garantia para servicos/processos deliberadamente destacados.
+- Os dois scripts de parada reutilizam `scripts/stop-server.ps1`: verificam a identidade, solicitam cleanup normal e aguardam ate 15 segundos antes do fallback forcado. Instancias antigas sem segredo de shutdown usam o fallback.
+- `src/local-shutdown.js` protege o canal administrativo local por segredo efemero em `data/runtime.json`, peer/Host loopback e rejeicao de Origin/proxy. Nao adiciona tool MCP nem muda OAuth/Cloudflare.
+- Erros operacionais de terminal incluem `isError: true` e `structuredContent.error` com codigo/mensagem; erros de schema continuam sob responsabilidade do SDK.
+
+Validacao: `npm test` passou em 45 testes (sem falhas ou ignorados, aproximadamente 15 segundos), incluindo nove testes adicionais de buffers, timeout, subprocessos, shutdown protegido, erros e scripts Windows (parada normal, fallback e recusa de processo alheio). Fixtures executaveis ficam em `test/fixtures`; dados gerados ficam em diretorios temporarios. Nao e benchmark comparativo de velocidade.
 
 ## Arquitetura
 

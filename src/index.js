@@ -1,18 +1,20 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { randomBytes } from "node:crypto";
 import { loadOrCreateConfig, savePublicMcpUrl } from "./config.js";
 import { createLogger, formatStartupSummary } from "./logger.js";
 import { startMcpHttpServer } from "./mcp-server.js";
 import { createTunnelController } from "./tunnel.js";
 import { WorkerTeamManager } from "./workers/team-manager.js";
 import { TerminalSessionManager } from "./terminal/session-manager.js";
+import { stopShellCommands } from "./tools/shell.js";
 
-async function writeRuntimeFile(projectRoot, port) {
+async function writeRuntimeFile(projectRoot, port, shutdownToken) {
   const runtimePath = path.join(projectRoot, "data", "runtime.json");
   await fs.writeFile(
     runtimePath,
-    `${JSON.stringify({ pid: process.pid, projectRoot, port, startedAt: new Date().toISOString() }, null, 2)}\n`,
+    `${JSON.stringify({ pid: process.pid, projectRoot, port, startedAt: new Date().toISOString(), shutdownToken }, null, 2)}\n`,
     { encoding: "utf8", mode: 0o600 }
   );
   return runtimePath;
@@ -42,19 +44,25 @@ async function main() {
   teamManager.startMaintenance();
 
   let server = null;
-  let shuttingDown = false;
+  let shutdownPromise = null;
+  // Segredo efemero apenas no runtime ignorado pelo Git; nao muda senha/chave OAuth.
+  const shutdownToken = randomBytes(32).toString("base64url");
   const runtimePath = path.join(projectRoot, "data", "runtime.json");
 
-  const shutdown = async (reason) => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    logger.info("Encerrando MCP Worker Coordinator.", { reason });
-    await terminalManager.stop().catch((error) => logger.error("Falha ao parar terminais.", { error: error.message }));
-    if (server) await server.stop().catch((error) => logger.error("Falha ao parar servidor HTTP.", { error: error.message }));
-    await teamManager.stop().catch((error) => logger.error("Falha ao parar coordenador.", { error: error.message }));
-    await tunnelController.stop().catch(() => {});
-    await fs.rm(runtimePath, { force: true }).catch(() => {});
-    logger.info("MCP Worker Coordinator encerrado.");
+  const shutdown = (reason) => {
+    if (shutdownPromise) return shutdownPromise;
+    server?.beginShutdown();
+    shutdownPromise = (async () => {
+      logger.info("Encerrando MCP Worker Coordinator.", { reason });
+      await terminalManager.stop().catch((error) => logger.error("Falha ao parar terminais.", { error: error.message }));
+      await stopShellCommands().catch((error) => logger.error("Falha ao parar comandos diretos.", { error: error.message }));
+      await teamManager.stop().catch((error) => logger.error("Falha ao parar coordenador.", { error: error.message }));
+      if (server) await server.stop().catch((error) => logger.error("Falha ao parar servidor HTTP.", { error: error.message }));
+      await tunnelController.stop().catch(() => {});
+      await fs.rm(runtimePath, { force: true }).catch(() => {});
+      logger.info("MCP Worker Coordinator encerrado.");
+    })();
+    return shutdownPromise;
   };
 
   process.once("SIGINT", () => shutdown("SIGINT").finally(() => process.exit(0)));
@@ -67,9 +75,12 @@ async function main() {
     logger.error("Promise rejeitada sem tratamento.", { error: error?.message || String(error), stack: error?.stack });
   });
 
-  server = await startMcpHttpServer({ config, teamManager, tunnelController, terminalManager });
+  server = await startMcpHttpServer({
+    config, teamManager, tunnelController, terminalManager,
+    shutdown: { token: shutdownToken, onRequest: () => { void shutdown("local_request").finally(() => process.exit(0)); } }
+  });
   const tunnelStatus = await tunnelController.start();
-  await writeRuntimeFile(projectRoot, server.port);
+  await writeRuntimeFile(projectRoot, server.port, shutdownToken);
 
   logger.info("MCP Worker Coordinator iniciado.", {
     pid: process.pid,

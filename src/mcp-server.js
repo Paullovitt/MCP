@@ -26,6 +26,7 @@ import { createOAuthRouter, getOAuthChallenge, isValidOAuthAccessToken } from ".
 import { mountUiRoutes } from "./ui-server.js";
 import { TerminalSessionManager } from "./terminal/session-manager.js";
 import { registerTerminalTools } from "./terminal/mcp-tools.js";
+import { mountLocalShutdown } from "./local-shutdown.js";
 
 // Os padroes usam o teto de cada tool; o cliente ainda pode pedir um prazo menor.
 import {
@@ -53,7 +54,11 @@ const commandResultOutputSchema = {
   stderr: z.string(),
   exitCode: z.number().nullable(),
   timedOut: z.boolean(),
-  durationMs: z.number()
+  durationMs: z.number(),
+  // Metadados adicionais sao opcionais para preservar consumidores e operacoes antigas.
+  canceled: z.boolean().optional(), stdoutTruncated: z.boolean().optional(), stderrTruncated: z.boolean().optional(),
+  stdoutBytes: z.number().optional(), stderrBytes: z.number().optional(), outputLimitBytes: z.number().optional(),
+  errorCode: z.string().optional()
 };
 
 const projectOverviewOutputSchema = {
@@ -209,7 +214,7 @@ const workerTaskDefinitionSchema = z.object({
 });
 
 export function createMcpServer(projectRoot, teamManager, terminalManager) {
-  const server = new McpServer({ name: "MCP Worker Coordinator", version: "2.5.0" });
+  const server = new McpServer({ name: "MCP Worker Coordinator", version: "2.5.1" });
   // Adiciona sessoes interativas sem modificar os schemas ou contratos das tools existentes.
   registerTerminalTools(server, terminalManager);
 
@@ -736,17 +741,23 @@ export function createMcpServer(projectRoot, teamManager, terminalManager) {
   return server;
 }
 
-export async function startMcpHttpServer({ config, teamManager, tunnelController, terminalManager = new TerminalSessionManager({ projectRoot: config.PROJECT_ROOT, config }) }) {
+export async function startMcpHttpServer({ config, teamManager, tunnelController, shutdown, terminalManager = new TerminalSessionManager({ projectRoot: config.PROJECT_ROOT, config }) }) {
   const app = express();
   const sessions = new Map();
   const authRequired = config.ALLOW_UNAUTHENTICATED_MCP !== true;
   let httpServer = null;
+  let stopping = false;
   const serverState = { isRunning: () => Boolean(httpServer?.listening) };
 
   app.set("trust proxy", true);
   app.disable("x-powered-by");
   app.use(express.json({ limit: "10mb" }));
   app.use(express.urlencoded({ extended: false, limit: "1mb" }));
+  mountLocalShutdown(app, shutdown);
+  app.use((_request, response, next) => {
+    if (stopping) return response.status(503).json({ error: "server_stopping" });
+    next();
+  });
   app.use(createOAuthRouter(config));
 
   app.get("/health", (_request, response) => {
@@ -835,7 +846,9 @@ export async function startMcpHttpServer({ config, teamManager, tunnelController
     localUrl: `http://127.0.0.1:${port}`,
     localMcpUrl: `http://127.0.0.1:${port}/mcp`,
     isRunning: serverState.isRunning,
+    beginShutdown: () => { stopping = true; },
     stop: async () => {
+      stopping = true;
       await terminalManager.stop();
       for (const { transport, mcpServer } of sessions.values()) {
         await transport.close().catch(() => {});

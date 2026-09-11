@@ -5,12 +5,21 @@ import { terminalStartSchema, terminalSendSchema, terminalReadSchema, terminalRe
 export function registerTerminalTools(server, manager) {
   const register = (name, description, schema, readOnlyHint, handler) => {
     server.registerTool(name, {
-      description, inputSchema: schema.shape, outputSchema: { data: z.unknown() },
+      description, inputSchema: schema.shape, outputSchema: {
+        data: z.unknown(), error: z.object({ code: z.string(), message: z.string() }).optional()
+      },
       annotations: { readOnlyHint, destructiveHint: !readOnlyHint, idempotentHint: readOnlyHint || name === "terminal_close", openWorldHint: !readOnlyHint }
     }, async (input) => {
-      if (!manager) throw new Error("TerminalSessionManager nao foi configurado neste servidor MCP.");
-      const result = { data: await handler(input) };
-      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+      try {
+        if (!manager) throw new Error("TerminalSessionManager nao foi configurado neste servidor MCP.");
+        const result = { data: await handler(input) };
+        return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+      } catch (error) {
+        // Falhas de operacao tem codigo legivel por maquina; nunca inclui stack, env ou entrada.
+        const code = error.code === "ENOENT" || error.code === "ENOTDIR" ? "CWD_NOT_FOUND" : error.code || "TERMINAL_ERROR";
+        const result = { data: null, error: { code, message: error.message || "Falha no terminal." } };
+        return { isError: true, content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+      }
     });
   };
   const idSchema = z.object({ sessionId: terminalSessionId });

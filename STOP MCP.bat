@@ -7,18 +7,8 @@ set "ROOT=%CD%"
 set "PATH=%ROOT%;%PATH%"
 set "MCP_NO_PAUSE=1"
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$root=[IO.Path]::GetFullPath('%ROOT%'); $runtimePath=Join-Path $root 'data\runtime.json'; $configPath=Join-Path $root 'data\config.json'; " ^
-  "$runtime=$null; if(Test-Path -LiteralPath $runtimePath){try{$runtime=Get-Content -Raw -LiteralPath $runtimePath|ConvertFrom-Json}catch{}}; " ^
-  "$config=$null; if(Test-Path -LiteralPath $configPath){try{$config=Get-Content -Raw -LiteralPath $configPath|ConvertFrom-Json}catch{}}; " ^
-  "$connection=Get-NetTCPConnection -State Listen -LocalPort 4194 -ErrorAction SilentlyContinue|Select-Object -First 1; " ^
-  "if(-not $connection){if(Test-Path -LiteralPath $runtimePath){Remove-Item -LiteralPath $runtimePath -Force}; Write-Host 'MCP ja estava parado.'; exit 0}; " ^
-  "$pidValue=[int]$connection.OwningProcess; $proc=Get-CimInstance Win32_Process -Filter ('ProcessId='+$pidValue) -ErrorAction SilentlyContinue; " ^
-  "$runtimeMatches=$runtime -and [int]$runtime.pid -eq $pidValue -and [int]$runtime.port -eq 4194 -and [IO.Path]::GetFullPath([string]$runtime.projectRoot) -eq $root; " ^
-  "$commandMatches=$proc -and ([string]$proc.Name -match '^node(\.exe)?$') -and ([string]$proc.CommandLine).IndexOf($root,[StringComparison]::OrdinalIgnoreCase) -ge 0; " ^
-  "$identityMatches=$false; try{$status=Invoke-RestMethod -Uri 'http://127.0.0.1:4194/api/status' -TimeoutSec 3; $identityMatches=$commandMatches -and $config -and $status.service -eq 'mcp-worker-coordinator' -and [string]$status.installId -eq [string]$config.INSTALL_ID}catch{}; " ^
-  "if(-not (($runtimeMatches -and $commandMatches) -or $identityMatches)){Write-Error ('A porta 4194 pertence a outro processo. PID='+$pidValue+'. Nada foi encerrado.'); exit 2}; " ^
-  "Write-Host ('Encerrando MCP Worker Coordinator PID '+$pidValue+'...'); Stop-Process -Id $pidValue -Force; Start-Sleep -Milliseconds 700; if(Test-Path -LiteralPath $runtimePath){Remove-Item -LiteralPath $runtimePath -Force}; exit 0"
+rem Usa o mesmo protocolo de parada normal do iniciador compativel.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\stop-server.ps1" -ProjectRoot "%ROOT%"
 set "SERVER_RESULT=%ERRORLEVEL%"
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^

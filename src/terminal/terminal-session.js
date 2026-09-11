@@ -44,9 +44,9 @@ export class TerminalSession {
         this.signal = message.signal ?? null;
       } else if (message.type === "failure") {
         this.errorCode = message.code;
-        this.rejectReady(new Error(message.code === "PTY_UNAVAILABLE"
+        this.rejectReady(Object.assign(new Error(message.code === "PTY_UNAVAILABLE"
           ? "node-pty indisponivel. Execute npm install --include=optional e verifique o suporte nativo."
-          : "Falha ao iniciar/operar a PTY; verifique o executavel e seus argumentos."));
+          : "Falha ao iniciar/operar a PTY; verifique o executavel e seus argumentos."), { code: message.code }));
       }
     });
     this.host.once("error", () => {
@@ -84,7 +84,7 @@ export class TerminalSession {
   }
 
   assertRunning() {
-    if (this.status !== "running" || !this.host.connected) throw new Error("Sessao nao esta em execucao.");
+    if (this.status !== "running" || !this.host.connected) throw Object.assign(new Error("Sessao nao esta em execucao."), { code: "SESSION_NOT_RUNNING" });
   }
 
   async send(data, newline = true) {
@@ -125,7 +125,9 @@ export class TerminalSession {
     this.status = "closing";
     clearTimeout(this.startTimer);
     this.rejectReady(new Error("Terminal encerrado durante a inicializacao."));
-    this.closing = terminateProcessTree(this.host).then(() => {
+    this.closing = terminateProcessTree(this.host, 300, {
+      onForce: () => this.onLifecycle("forced_termination", this)
+    }).then(() => {
       this.finish();
       return this.snapshot();
     }).catch((error) => {

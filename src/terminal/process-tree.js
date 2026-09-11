@@ -18,17 +18,25 @@ async function taskkill(pid, force) {
   });
 }
 
-export async function terminateProcessTree(child, graceMs = 300) {
+export async function terminateProcessTree(child, graceMs = 300, { kind = "terminal", onForce = () => {} } = {}) {
   if (!child.pid || hasExited(child)) return;
   if (process.platform === "win32") {
     await taskkill(child.pid, false);
     if (!hasExited(child)) await delay(graceMs);
-    if (!hasExited(child)) await taskkill(child.pid, true);
+    if (!hasExited(child)) {
+      onForce();
+      await taskkill(child.pid, true);
+    }
   } else {
-    // O host encaminha o encerramento ao grupo da PTY antes de sair.
-    if (child.connected) child.send({ type: "close" }, () => {});
+    // Shells diretos nascem em grupo proprio; hosts de PTY recebem shutdown pelo IPC.
+    if (kind === "command") {
+      try { process.kill(-child.pid, "SIGTERM"); } catch (error) { if (error.code !== "ESRCH") throw error; }
+    } else if (child.connected) child.send({ type: "close" }, () => {});
     await delay(graceMs);
-    if (!hasExited(child)) child.kill("SIGKILL");
+    if (kind === "command") {
+      // O shell pai pode sair antes de um descendente que ignora SIGTERM.
+      try { process.kill(-child.pid, 0); onForce(); process.kill(-child.pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; }
+    } else if (!hasExited(child)) { onForce(); child.kill("SIGKILL"); }
   }
   // Aguarda o evento exit sem deixar uma falha de encerramento travar o shutdown para sempre.
   for (let attempt = 0; attempt < 20 && !hasExited(child); attempt++) await delay(50);

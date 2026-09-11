@@ -1,5 +1,14 @@
 # Historico de alteracoes
 
+## 2.5.1 — 2026-09-11
+
+- Shell direto com buffers de cauda limitados a 512 KiB por stream, contadores, flags de truncamento e cancelamento distinto de timeout.
+- Encerramento da arvore em timeout/shutdown e erro explicito quando a terminacao nao pode ser confirmada.
+- Shutdown administrativo local protegido, cleanup normal e fallback Windows com verificacao de identidade; sem alterar OAuth ou Cloudflare.
+- Erros estruturados das tools de terminal e evento de lifecycle para encerramento forcado.
+- Nove testes adicionais de lifecycle e referencia tecnica publicada para Desktop Commander. Regressao final: 45 testes aprovados, sem falhas ou ignorados, em aproximadamente 15 segundos no Windows/Node 24.11.0. As 41 tools permanecem disponiveis; sem dependencia nova.
+- Limites: testes reais em Windows/Node 24; sem novo benchmark de velocidade, sem garantia para processos deliberadamente destacados. Pendencias npm anteriores permanecem descritas em SECURITY.md.
+
 ## 2.5.0 — 2026-09-11
 
 ### Adicionado
