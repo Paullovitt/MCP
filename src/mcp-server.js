@@ -24,6 +24,8 @@ import { killProcess, listProcesses, startProcess } from "./tools/process.js";
 import { npmInstall } from "./tools/package-manager.js";
 import { createOAuthRouter, getOAuthChallenge, isValidOAuthAccessToken } from "./oauth.js";
 import { mountUiRoutes } from "./ui-server.js";
+import { TerminalSessionManager } from "./terminal/session-manager.js";
+import { registerTerminalTools } from "./terminal/mcp-tools.js";
 
 // Os padroes usam o teto de cada tool; o cliente ainda pode pedir um prazo menor.
 import {
@@ -206,8 +208,10 @@ const workerTaskDefinitionSchema = z.object({
   intelligenceMode: z.enum(["always", "auto", "off"]).optional().default("always")
 });
 
-export function createMcpServer(projectRoot, teamManager) {
-  const server = new McpServer({ name: "MCP Worker Coordinator", version: "2.4.1" });
+export function createMcpServer(projectRoot, teamManager, terminalManager) {
+  const server = new McpServer({ name: "MCP Worker Coordinator", version: "2.5.0" });
+  // Adiciona sessoes interativas sem modificar os schemas ou contratos das tools existentes.
+  registerTerminalTools(server, terminalManager);
 
   registerJsonTool(
     server,
@@ -732,7 +736,7 @@ export function createMcpServer(projectRoot, teamManager) {
   return server;
 }
 
-export async function startMcpHttpServer({ config, teamManager, tunnelController }) {
+export async function startMcpHttpServer({ config, teamManager, tunnelController, terminalManager = new TerminalSessionManager({ projectRoot: config.PROJECT_ROOT, config }) }) {
   const app = express();
   const sessions = new Map();
   const authRequired = config.ALLOW_UNAUTHENTICATED_MCP !== true;
@@ -768,7 +772,7 @@ export async function startMcpHttpServer({ config, teamManager, tunnelController
       }
 
       if (!sessionId && isInitializeRequest(request.body)) {
-        const mcpServer = createMcpServer(config.PROJECT_ROOT, teamManager);
+        const mcpServer = createMcpServer(config.PROJECT_ROOT, teamManager, terminalManager);
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (newSessionId) => sessions.set(newSessionId, { transport, mcpServer })
@@ -832,6 +836,7 @@ export async function startMcpHttpServer({ config, teamManager, tunnelController
     localMcpUrl: `http://127.0.0.1:${port}/mcp`,
     isRunning: serverState.isRunning,
     stop: async () => {
+      await terminalManager.stop();
       for (const { transport, mcpServer } of sessions.values()) {
         await transport.close().catch(() => {});
         mcpServer.close();

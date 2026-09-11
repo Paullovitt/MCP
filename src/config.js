@@ -2,12 +2,14 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { MAX_WORKER_TASK_TIMEOUT_MS } from "./timeouts.js";
+import { TERMINAL_DEFAULTS, terminalConfigSchema } from "./terminal/session-manager.js";
 
 export const REQUIRED_SERVER_PORT = 4194;
 const DEFAULT_OAUTH_ACCESS_TOKEN_TTL_SECONDS = 365 * 24 * 60 * 60;
 const DEFAULT_OAUTH_REFRESH_TOKEN_TTL_SECONDS = 2 * 365 * 24 * 60 * 60;
 
 const CONFIG_DEFAULTS = {
+  ...TERMINAL_DEFAULTS,
   TUNNEL_PROVIDER: "cloudflare",
   ALLOW_UNAUTHENTICATED_MCP: false,
   SERVER_PORT: REQUIRED_SERVER_PORT,
@@ -130,6 +132,8 @@ function normalizeConfig(rawConfig, projectRoot) {
     changed = true;
   }
 
+  // Limites invalidos do terminal falham explicitamente, sem alterar permissoes ou credenciais.
+  terminalConfigSchema.parse(config);
   return { config, changed };
 }
 

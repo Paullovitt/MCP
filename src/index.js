@@ -6,6 +6,7 @@ import { createLogger, formatStartupSummary } from "./logger.js";
 import { startMcpHttpServer } from "./mcp-server.js";
 import { createTunnelController } from "./tunnel.js";
 import { WorkerTeamManager } from "./workers/team-manager.js";
+import { TerminalSessionManager } from "./terminal/session-manager.js";
 
 async function writeRuntimeFile(projectRoot, port) {
   const runtimePath = path.join(projectRoot, "data", "runtime.json");
@@ -21,6 +22,8 @@ async function main() {
   const projectRoot = path.resolve(process.cwd());
   const config = await loadOrCreateConfig(projectRoot);
   const logger = createLogger(projectRoot);
+  // Um unico registro de terminais sobrevive a reconexoes MCP e independe dos tres workers.
+  const terminalManager = new TerminalSessionManager({ projectRoot, logger, config });
   const tunnelController = createTunnelController({
     provider: config.TUNNEL_PROVIDER,
     publicMcpUrl: config.PUBLIC_MCP_URL,
@@ -46,6 +49,7 @@ async function main() {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info("Encerrando MCP Worker Coordinator.", { reason });
+    await terminalManager.stop().catch((error) => logger.error("Falha ao parar terminais.", { error: error.message }));
     if (server) await server.stop().catch((error) => logger.error("Falha ao parar servidor HTTP.", { error: error.message }));
     await teamManager.stop().catch((error) => logger.error("Falha ao parar coordenador.", { error: error.message }));
     await tunnelController.stop().catch(() => {});
@@ -63,7 +67,7 @@ async function main() {
     logger.error("Promise rejeitada sem tratamento.", { error: error?.message || String(error), stack: error?.stack });
   });
 
-  server = await startMcpHttpServer({ config, teamManager, tunnelController });
+  server = await startMcpHttpServer({ config, teamManager, tunnelController, terminalManager });
   const tunnelStatus = await tunnelController.start();
   await writeRuntimeFile(projectRoot, server.port);
 

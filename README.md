@@ -4,6 +4,8 @@ Aplicacao local em Node.js que conecta uma unica conversa do ChatGPT a tres proc
 
 O ChatGPT continua sendo o unico componente inteligente. Os workers nao usam modelos, OpenAI API, Ollama, LM Studio ou outros agentes. Eles apenas executam operacoes estruturadas decididas pelo GPT.
 
+Versao atual: **2.5.0**. Consulte o [guia completo do terminal](docs/TERMINAL.md), o [historico de alteracoes](CHANGELOG.md) e a [politica de seguranca](SECURITY.md).
+
 ## Arquitetura
 
 ```text
@@ -12,16 +14,13 @@ ChatGPT (uma unica conversa)
         | OAuth + MCP
         v
 Servidor unico http://127.0.0.1:4194
-        |-----------------------------|
-        v                             v
-Coordenador de tarefas
- (DAG + LPT/EWMA + locks R/W)
-                              CodeIntelligenceEngine
-                              (TS + LSP + SQL + projetos)
-   |        |        |
-Worker 1 Worker 2 Worker 3
-   \        |        /       /
-     Projeto local escolhido
+        |-- TeamManager (DAG + LPT/EWMA + locks R/W)
+        |     `-- Worker 1 / Worker 2 / Worker 3 por equipe
+        |-- CodeIntelligenceEngine (compartilhado pelo MCP e workers)
+        `-- TerminalSessionManager (sessoes independentes)
+              `-- host isolado + PTY por sessao
+
+Todos operam sobre os projetos locais escolhidos pelo usuario.
 ```
 
 O mesmo servidor e a mesma porta atendem:
@@ -45,14 +44,16 @@ Python e analisado pelo Pyright empacotado no projeto, sem exigir instalacao glo
 
 O armazenamento usa o modulo SQLite nativo do Node.js. Nenhum pacote SQLite externo e necessario.
 
-Dependencias npm principais: `@modelcontextprotocol/sdk`, `express`, `zod`, `typescript` 6.0.3, `pyright`, `vscode-langservers-extracted` e `node-sql-parser`. As versoes exatas ficam registradas em `package-lock.json`.
+Dependencias npm principais: `@modelcontextprotocol/sdk`, `express`, `zod`, `typescript` 6.0.3, `pyright`, `vscode-langservers-extracted` e `node-sql-parser`. O terminal usa a dependencia nativa opcional `node-pty` 1.1.0. As versoes exatas ficam registradas em `package-lock.json`.
 
 ## Instalacao
 
 ```powershell
 cd C:\Users\USER\Downloads\CODIGOS\MCP
-npm install
+npm ci --include=optional
 ```
+
+`npm ci` instala exatamente o lockfile e recria `node_modules`; nao apaga `data/` ou `logs/`. Feche as tarefas e pare o MCP antes de atualizar dependencias. Para Node/npm globais e Cloudflare ja configurado, use `scripts\start.bat`. Os executaveis locais exigidos por `INICIAR MCP.bat` nao sao distribuidos neste repositorio.
 
 ## Inicializacao e parada
 
@@ -72,14 +73,11 @@ Parar com verificacao de identidade do processo:
 STOP MCP.bat
 ```
 
-O script de parada encerra o processo somente quando todas estas condicoes sao verdadeiras:
-
-1. o PID possui a porta 4194;
-2. o PID e o mesmo registrado em `data/runtime.json`;
-3. o registro aponta para esta pasta;
-4. a linha de comando do processo Node contem o caminho absoluto desta copia.
+O script verifica o processo Node dono da porta 4194 e a linha de comando desta copia. A identidade e confirmada pelo runtime (PID/porta/raiz) ou pela resposta local de `/api/status` com o `INSTALL_ID` configurado.
 
 Se outro processo estiver usando a porta, ele nao sera encerrado.
+
+Atencao: `STOP MCP.bat` tambem tenta parar o Cloudflare associado ao YAML, mesmo se a verificacao do MCP falhar. Para parar somente o servidor MCP e preservar o tunel, use `scripts\stop.bat`.
 
 Logs do servidor:
 
@@ -116,9 +114,40 @@ Quando `PUBLIC_MCP_URL` estiver configurada, o terminal mostra a URL e o status 
 - `src/storage/sqlite-store.js`: persiste equipes, tarefas, metricas, logs e bloqueios no SQLite;
 - `src/code-intelligence/`: mantem o roteador central, cliente LSP, sessoes incrementais, parsers estruturais e inteligencia de projeto/dependencias;
 - `src/tools/`: implementa filesystem, shell, Git, processos, npm, projeto e screenshot;
+- `src/terminal/session-manager.js`: registro unico, perfis, validacao, limites, idle e retencao das sessoes;
+- `src/terminal/terminal-session.js`: estado, IPC, entrada, saida, resize e encerramento de uma sessao;
+- `src/terminal/pty-host.js`: processo auxiliar isolado que hospeda `node-pty`/ConPTY;
+- `src/terminal/output-buffer.js`: ring buffer UTF-8 com limite de bytes e cursor incremental;
+- `src/terminal/process-tree.js`: tentativa normal e encerramento forcado da arvore pertencente a sessao;
+- `src/terminal/mcp-tools.js`: adaptador das sete tools de terminal persistente;
 - `INICIAR MCP.bat` e `STOP MCP.bat`: iniciam, detectam e encerram a instancia Windows com seguranca.
 
 Manter interface, MCP e OAuth no mesmo processo e na mesma porta reduz configuracao e pontos de falha. A interface continua isolada por `requireLocalRequest`, portanto um host separado para o painel nao e necessario no uso local atual.
+
+## Estrutura do repositorio
+
+```text
+MCP/
+  src/
+    terminal/           # Sessoes PTY independentes
+    workers/            # Coordenacao e execucao com tres workers
+    code-intelligence/  # Analise central compartilhada
+    storage/            # Persistencia SQLite
+    tools/              # Operacoes locais
+    public/             # Interface administrativa
+  scripts/              # Inicializadores compativeis com Node global
+  test/                 # Testes automatizados; fixtures temporarias fora do repositorio
+  docs/TERMINAL.md      # Contratos, exemplos e diagnostico do terminal
+  README.md
+  CHANGELOG.md
+  SECURITY.md
+  LICENSE
+  package.json
+  package-lock.json
+  data/                 # Gerado localmente; nunca publicar
+  logs/                 # Gerado localmente; nunca publicar
+  node_modules/         # Instalado pelo npm; nunca publicar
+```
 
 ## Configuracao local
 
@@ -146,9 +175,9 @@ Esse arquivo e ignorado pelo Git. Os campos principais sao:
 }
 ```
 
-Nao existe token estatico de compatibilidade. O endpoint MCP aceita somente access tokens emitidos pelo fluxo OAuth e assinados com `OAUTH_SHARED_TOKEN_SECRET`.
+Nao existe token estatico de compatibilidade. Novos access tokens OAuth sao assinados com `OAUTH_SHARED_TOKEN_SECRET`. Access tokens opacos de versoes anteriores ainda sao aceitos enquanto validos no `oauth-store.json` local, para nao interromper conexoes durante a migracao.
 
-`OAUTH_LOGIN_PASSWORD` pode ser diferente em cada computador. `OAUTH_SHARED_TOKEN_SECRET` deve ser igual em todas as instalacoes que alternam o mesmo dominio publico. Ao iniciar pelos scripts Windows, essa chave e derivada automaticamente da credencial do mesmo Cloudflare Tunnel e gravada apenas no `data/config.json` local.
+`OAUTH_LOGIN_PASSWORD` pode ser diferente em cada computador. `OAUTH_SHARED_TOKEN_SECRET` deve ser igual em todas as instalacoes que alternam o mesmo dominio publico. Ao iniciar pelo `INICIAR MCP.bat`, essa chave pode ser derivada da credencial do Cloudflare Tunnel e gravada apenas no `data/config.json` local. `scripts/start.bat` nao faz essa derivacao.
 
 ## URL publica
 
@@ -203,13 +232,13 @@ Faca a atualizacao uma unica vez:
 2. Pare o MCP nos dois computadores.
 3. Confirme que o YAML do Cloudflare nos dois computadores usa o mesmo tunel e contem a rota `hostname: mcp2.luckytrevo.com` com `credentials-file` configurado.
 4. Confirme que `PUBLIC_MCP_URL` e a mesma nas duas copias.
-5. Inicie apenas um dos computadores com `INICIAR MCP.bat`. O script deriva e salva a mesma chave nos dois ambientes sem exibi-la.
+5. Inicie apenas um dos computadores com `INICIAR MCP.bat`. O script deriva e salva a chave somente nessa copia; ao iniciar a outra, a mesma credencial do tunel produz a mesma chave.
 6. Reconecte o MCP no ChatGPT uma ultima vez para receber os novos tokens assinados.
 7. Depois disso, pare uma instalacao antes de iniciar a outra. O mesmo token sera aceito nas duas.
 
 Se uma instalacao nao usar o script ou nao tiver `credentials-file`, sincronize manualmente apenas o valor de `OAUTH_SHARED_TOKEN_SECRET` nos dois arquivos `data/config.json`.
 
-Nao envie essa chave por chat, nao a coloque no README e nao a adicione ao Git. Nao e necessario copiar `OAUTH_LOGIN_PASSWORD`, `oauth-store.json` ou o banco SQLite. Alterar `OAUTH_SHARED_TOKEN_SECRET` revoga os tokens assinados anteriormente e exige uma nova autorizacao.
+Nao envie essa chave por chat, nao a coloque no README e nao a adicione ao Git. Nao e necessario copiar `OAUTH_LOGIN_PASSWORD`, `oauth-store.json` ou o banco SQLite. Trocar a chave invalida a verificacao criptografica anterior, mas o fallback do store local ainda pode aceitar um token registrado e nao expirado. Para revogacao completa, e preciso trocar a chave e reinicializar o store OAuth em todas as copias, seguido de nova autorizacao; consulte [SECURITY.md](SECURITY.md).
 
 ## Tools de coordenacao
 
@@ -274,6 +303,92 @@ npm test
 `test/timeouts.test.js` verifica schemas pelo protocolo MCP, configuracao, execucao com tres workers, espera sem cancelamento, cancelamento explicito, timeout e regressao de escrita. Os testes usam diretorios temporarios e SQLite isolado, removidos ao finalizar. Os valores de 24 horas sao verificados sem esperar um dia; a interrupcao real e exercitada com prazos curtos.
 
 `test/oauth.test.js` verifica descoberta, senha, PKCE, uso unico de codigo, refresh entre instalacoes com a mesma chave e rejeicao de assinatura/recurso invalidos. Tokens locais antigos tambem sao testados. Servidores HTTP de teste escutam apenas em loopback e usam credenciais temporarias.
+
+`test/terminal.test.js` testa PTYs reais de Node, Python e PowerShell, variaveis persistentes, prompt/input sem Enter, Unicode, Ctrl+C, resize, buffer limitado, cursores, limites concorrentes, idle, retencao, falhas, encerramento da arvore, crash do host, perda abrupta do processo pai, reconexao MCP e protecao OAuth. Python/PowerShell sao explicitamente marcados como ignorados se seus executaveis nao estiverem instalados na plataforma do teste; Node e obrigatorio. Nenhum teste usa os tokens ou banco de producao.
+
+`test/documentation.test.js` valida os links locais da documentacao, confere que os sete contratos de terminal estao descritos e executa o exemplo JavaScript do guia contra uma PTY real. Os testes nao ficam misturados ao codigo de producao.
+
+## Terminal interativo persistente (v2.5.0)
+
+O terminal e um recurso adicional, nao uma substituicao de `run_shell`, `run_shell_background` ou dos tres workers. As 34 tools anteriores mantem seus contratos; sete tools novas elevam o total para 41. Nao requer outro dominio, porta, senha ou alteracao no Cloudflare.
+
+Referencia detalhada: [parametros, retornos, estados, exemplo executavel, atualizacao e erros](docs/TERMINAL.md).
+
+```text
+Servidor MCP + OAuth
+  |-- tools existentes / Code Intelligence / tres workers
+  `-- TerminalSessionManager (unico, compartilhado pelas conexoes MCP)
+        |-- sessao A -> host Node isolado -> ConPTY -> PowerShell
+        |-- sessao B -> host Node isolado -> ConPTY -> Python
+        `-- sessao C -> host Node isolado -> ConPTY -> Node REPL
+```
+
+### Instalacao e compatibilidade
+
+```powershell
+npm install --include=optional
+npm test
+```
+
+O backend e uma PTY real, usando [`node-pty` da Microsoft](https://github.com/microsoft/node-pty) 1.1.0, fixado no lockfile. Validado neste computador com Node 24.11.0 e Windows. Windows 10 1809+ / Windows 11 e necessario para ConPTY. Caso nao haja binario compativel, a compilacao pode requerer Python, Visual Studio C++ Build Tools e Windows SDK. Python e demais CLIs devem estar instalados e acessiveis no PATH; esta melhoria nao instala Python, SSH, PostgreSQL ou MySQL.
+
+`node-pty` e dependencia opcional para preservar a inicializacao e as tools anteriores caso o addon nativo nao instale. Nesse caso `terminal_start` retorna erro explicito: nao finge uma PTY usando pipes. Cada sessao usa um processo auxiliar Node para isolar crashes e liberar handles nativos no encerramento; nao consome uma vaga dos workers. Existe custo de RAM por sessao aberta, mas nenhum host de terminal e criado quando o recurso nao esta em uso.
+
+### Tools e exemplo de uso
+
+| Tool | Funcao |
+|---|---|
+| `terminal_start` | Abre perfil `powershell` (padrao), `python`, `node` ou executavel com `args` explicitos |
+| `terminal_send` | Envia `data`; `newline: true` acrescenta Enter (`\r`) |
+| `terminal_read` | Le por `afterOffset`, sem espera e sem consumir o cursor de outro leitor |
+| `terminal_status` | Estado, PID, tamanho, timestamps, motivo de fechamento e exit code disponivel |
+| `terminal_list` | Lista sessoes ativas e encerradas ainda retidas |
+| `terminal_resize` | Ajusta `cols`/`rows`, entre 2 e 500 |
+| `terminal_close` | Fecha a sessao e sua arvore, com fallback forcado |
+
+Exemplo conceitual das chamadas MCP (todos os retornos novos ficam em `structuredContent.data`):
+
+```javascript
+terminal_start({ shell: "python", cwd: "C:\\MeuProjeto" })
+// Guarde data.sessionId. Leia ate aparecer >>> antes de enviar comandos.
+terminal_read({ sessionId, afterOffset: 0 })
+terminal_send({ sessionId, data: "x = 50" })
+// Leia a resposta/novo prompt, guardando data.cursor para a proxima leitura.
+terminal_read({ sessionId, afterOffset: cursor })
+terminal_send({ sessionId, data: "print(x * 10)" })
+terminal_read({ sessionId, afterOffset: cursor }) // Saida: 500
+terminal_close({ sessionId })
+```
+
+`terminal_send` confirma envio, nao conclusao do comando: aguarde o prompt/resultado com `terminal_read` antes de enviar o proximo comando. Alguns REPLs descartam teclado recebido durante uma avaliacao. Para prompts `y/n`, envie a resposta; para texto sem Enter use `newline: false`; para Ctrl+C use `{data: "\u0003", newline: false}`. O estado `running` significa processo vivo, nao necessariamente pronto para outro comando. Comandos finitos e lotes continuam sendo mais adequados ao `run_shell`/workers.
+
+`args`, quando fornecido, substitui os argumentos do perfil. Python usa o REPL basico (`PYTHON_BASIC_REPL=1`) para nao depender de respostas de posicionamento de cursor de um emulador visual. SSH/psql/mysql podem usar a mesma PTY se instalados, mas conexoes externas e menus de tela inteira nao foram certificados; as tools retornam fluxo de texto/ANSI, nao uma tela renderizada.
+
+### Memoria, seguranca e lifecycle
+
+Os campos abaixo em `data/config.json` podem ser ajustados antes de reiniciar o MCP:
+
+| Campo | Padrao | Faixa aceita |
+|---|---:|---:|
+| `TERMINAL_MAX_SESSIONS` | 8 simultaneas | 1–32 |
+| `TERMINAL_BUFFER_BYTES` | 1 MiB por sessao | 4 KiB–16 MiB |
+| `TERMINAL_READ_MAX_BYTES` | 64 KiB por leitura | 4 bytes–256 KiB |
+| `TERMINAL_IDLE_TIMEOUT_MS` | 0 (desativado) | 0–2147483647 ms |
+| `TERMINAL_RETENTION_MS` | 10 minutos apos encerrar | 0–24 horas |
+
+O `idleTimeoutMs` por sessao sobrepoe o padrao. Nao existe timeout total de execucao no terminal; nao depende do limite de 120 segundos ou dos prazos dos workers. Idle mede ultima entrada/saida ou resize, nao consultas de status/leitura. A manutencao verifica idle/retencao a cada 500 ms. Alem do prazo de retencao, o numero de sessoes encerradas guardadas e limitado a `TERMINAL_MAX_SESSIONS`, removendo as mais antigas primeiro.
+
+O ring buffer descarta apenas o historico mais antigo e sinaliza `truncatedBefore`. Reutilize o `cursor` em bytes UTF-8 como `afterOffset`, inclusive com `stripAnsi: true`; esse filtro apenas facilita leitura, nao e um emulador de terminal. `hasMore` indica paginacao. stdout e stderr sao combinados pela PTY. `cwd` e o diretorio inicial: comandos `cd` nao atualizam automaticamente esse metadado.
+
+Sessoes persistem durante reconexoes MCP, mas nao sobrevivem a reinicio do servidor nem sao gravadas no SQLite. Fechar uma conexao MCP nao fecha seus terminais: use `terminal_close`. O shutdown encerra todas as sessoes; perda de IPC apos parada forcada do MCP tambem aciona limpeza. No Windows a parada usa `taskkill /PID <host-da-sessao> /T` e tenta `/F` somente se necessario. Processos externos deliberadamente destacados, servicos ou tarefas agendadas nao sao garantidos por essa limpeza.
+
+O mesmo OAuth existente protege todas as tools. Este MCP e de instalacao/usuario confiavel unico: clientes autenticados na mesma instancia compartilham as sessoes. Nao e isolamento multiusuario. Os terminais executam com as permissoes do MCP e mantem a politica atual de caminhos absolutos fora do repositorio. Variaveis de ambiente do processo sao herdadas, exceto `MCP_*`; overrides sao validados e limitados a 128 entradas/64 KiB. Entrada por chamada fica limitada a 64 KiB.
+
+Logs de diagnostico registram apenas lifecycle/IDs/PID, nunca comandos, saidas ou variaveis. Mesmo assim, programas podem ecoar senhas na propria PTY, e a saida pode conter segredos visiveis para qualquer cliente MCP autenticado; nao use `echo` para credenciais. O buffer vive somente em RAM. Sessao encerrada permanece legivel ate expirar a retencao ou reiniciar o MCP; isso nao promete limpeza criptografica da memoria ou de historicos que a propria CLI grave em disco.
+
+Terminais nao participam do scheduler, locks, DAG nem validacao automatica de Code Intelligence. Alterar arquivos por eles pode conflitar com workers: nao edite simultaneamente os mesmos arquivos e use workers para tarefas coordenadas. Nenhuma integracao dos terminais nos tres workers foi adicionada nesta etapa.
+
+Validacao realizada em 11/09/2026: a suite final `npm test` passou em 36 testes, incluindo os dois testes da documentacao, sem falhas ou testes ignorados (aproximadamente 15 segundos). O endpoint local e o dominio publico existente passaram em health check (200), descoberta OAuth, MCP autenticado com token ja existente, listagem de 41 tools, leitura de arquivo pela tool antiga e continuidade da mesma sessao Python entre acesso local e publico (`x = 50`, depois `500`). Requisicoes sem token foram rejeitadas com 401. Isso valida servidor/tunel/OAuth pelo protocolo, nao uma interacao manual dentro da interface do ChatGPT.
 
 ## Tools de Code Intelligence
 
@@ -583,6 +698,8 @@ O indice de Code Intelligence permanece somente em memoria: codigo-fonte, ASTs e
 
 Em cinco rodadas no Windows com Node.js 24, tres escritas JavaScript paralelas levaram mediana de 95 ms com validacao desligada e 303 ms com a sessao aquecida em modo `always`: custo absoluto de 208 ms por lote. A inicializacao fria levou 699 ms. Operacoes sem escrita permaneceram no mesmo caminho rapido; seis tarefas de 600 ms obtiveram mediana de 1745 ms com tres workers e 4910 ms com um worker, speedup de 2,814x.
 
+Esses numeros sao historicos da validacao automatica, nao um benchmark do terminal da versao 2.5.0. Nao representam promessa de ganho de velocidade nem foram refeitos nesta entrega.
+
 ## Seguranca
 
 - A aplicacao escuta somente em `127.0.0.1`.
@@ -594,7 +711,7 @@ Em cinco rodadas no Windows com Node.js 24, tres escritas JavaScript paralelas l
 - Redirect URIs dinamicas aceitam apenas HTTPS ou callback HTTP local.
 - Workers so aceitam caminhos declarados dentro do projeto da equipe.
 - Escritas conflitantes nao sobrescrevem arquivos silenciosamente.
-- Comandos e resultados ficam registrados.
+- Tarefas e resultados dos workers ficam registrados; o diagnostico do terminal persistente registra somente lifecycle, sem copiar entrada/saida para o SQLite ou logs.
 
 Veja tambem `SECURITY.md`.
 
