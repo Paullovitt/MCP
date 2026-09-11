@@ -1,5 +1,6 @@
 import express from "express";
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
@@ -23,6 +24,14 @@ import { killProcess, listProcesses, startProcess } from "./tools/process.js";
 import { npmInstall } from "./tools/package-manager.js";
 import { createOAuthRouter, getOAuthChallenge, isValidOAuthAccessToken } from "./oauth.js";
 import { mountUiRoutes } from "./ui-server.js";
+
+// Os padroes usam o teto de cada tool; o cliente ainda pode pedir um prazo menor.
+import {
+  MAX_WORKER_TASK_TIMEOUT_MS as LONG_TASK_TIMEOUT_MS,
+  MAX_SHELL_TIMEOUT_MS,
+  MAX_TEST_TIMEOUT_MS,
+  MAX_WORKER_WAIT_TIMEOUT_MS
+} from "./timeouts.js";
 
 function jsonToolResult(result) {
   return {
@@ -192,13 +201,13 @@ const workerTaskDefinitionSchema = z.object({
   readPaths: z.array(z.string()).optional().default([]),
   writePaths: z.array(z.string()).optional().default([]),
   lockPolicy: z.enum(["wait", "reject"]).optional().default("wait"),
-  timeoutMs: z.number().int().positive().max(600_000).optional(),
-  estimatedDurationMs: z.number().int().positive().max(600_000).optional(),
+  timeoutMs: z.number().int().positive().max(LONG_TASK_TIMEOUT_MS).optional(),
+  estimatedDurationMs: z.number().int().positive().max(LONG_TASK_TIMEOUT_MS).optional(),
   intelligenceMode: z.enum(["always", "auto", "off"]).optional().default("always")
 });
 
 export function createMcpServer(projectRoot, teamManager) {
-  const server = new McpServer({ name: "MCP Worker Coordinator", version: "2.2.0" });
+  const server = new McpServer({ name: "MCP Worker Coordinator", version: "2.2.1" });
 
   registerJsonTool(
     server,
@@ -365,11 +374,11 @@ export function createMcpServer(projectRoot, teamManager) {
   registerJsonTool(
     server,
     "run_shell",
-    "Executa comando no terminal local.",
+    "Executa um comando curto e aguarda o resultado. Para comandos que possam passar de 90 segundos, use run_shell_background.",
     {
       command: z.string(),
       cwd: z.string().optional().default("."),
-      timeoutMs: z.number().int().positive().max(120_000).optional().default(30_000)
+      timeoutMs: z.number().int().positive().max(MAX_SHELL_TIMEOUT_MS).optional().default(MAX_SHELL_TIMEOUT_MS)
     },
     commandResultOutputSchema,
     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -384,7 +393,7 @@ export function createMcpServer(projectRoot, teamManager) {
       cwd: z.string().optional().default("."),
       packages: z.array(z.string()).optional().default([]),
       flags: z.array(z.string()).optional().default([]),
-      timeoutMs: z.number().int().positive().max(600_000).optional().default(300_000)
+      timeoutMs: z.number().int().positive().max(MAX_SHELL_TIMEOUT_MS).optional().default(MAX_SHELL_TIMEOUT_MS)
     },
     commandResultOutputSchema,
     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
@@ -452,7 +461,7 @@ export function createMcpServer(projectRoot, teamManager) {
     {
       cwd: z.string().optional().default("."),
       command: z.string().optional().default("npm test"),
-      timeoutMs: z.number().int().positive().max(300_000).optional().default(120_000)
+      timeoutMs: z.number().int().positive().max(MAX_TEST_TIMEOUT_MS).optional().default(MAX_TEST_TIMEOUT_MS)
     },
     commandResultOutputSchema,
     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -533,6 +542,66 @@ export function createMcpServer(projectRoot, teamManager) {
 
   registerDataTool(
     server,
+    "run_shell_background",
+    "Inicia um comando longo em um worker e retorna imediatamente. A tarefa pode rodar por ate 24 horas e continua consultavel e cancelavel pelo taskId.",
+    {
+      teamId: z.string().optional(),
+      projectPath: z.string().optional(),
+      command: z.string().min(1),
+      cwd: z.string().optional().default("."),
+      timeoutMs: z.number().int().positive().max(LONG_TASK_TIMEOUT_MS).optional().default(LONG_TASK_TIMEOUT_MS),
+      mutatesFiles: z.boolean().optional().default(false),
+      readPaths: z.array(z.string()).optional().default([]),
+      writePaths: z.array(z.string()).optional().default([]),
+      intelligenceMode: z.enum(["always", "auto", "off"]).optional().default("always")
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    async (input) => {
+      let teamId = input.teamId;
+
+      if (!teamId) {
+        const projectPath = path.resolve(input.projectPath || projectRoot);
+        const existingTeam = teamManager.getOverview().activeTeams.find(
+          (entry) => path.resolve(entry.team.projectRoot) === projectPath
+        );
+        const teamStatus = existingTeam || await teamManager.createTeam({
+          projectPath,
+          name: "Comandos longos"
+        });
+        teamId = teamStatus.team.id;
+      }
+
+      const task = await teamManager.assignTask({
+        teamId,
+        operation: "run_shell",
+        params: {
+          command: input.command,
+          cwd: input.cwd,
+          mutatesFiles: input.mutatesFiles
+        },
+        readPaths: input.readPaths,
+        writePaths: input.writePaths,
+        timeoutMs: input.timeoutMs,
+        estimatedDurationMs: input.timeoutMs,
+        intelligenceMode: input.intelligenceMode,
+        scheduler: { longRunning: true }
+      });
+
+      return {
+        teamId,
+        workerId: task.workerId,
+        taskId: task.id,
+        status: task.status,
+        timeoutMs: task.timeoutMs,
+        monitorWith: "get_worker_result",
+        logsWith: "get_worker_logs",
+        cancelWith: "cancel_worker_task"
+      };
+    }
+  );
+
+  registerDataTool(
+    server,
     "assign_worker_task",
     "Enfileira uma operacao estruturada; escritas de codigo recebem preflight e validacao automatica por padrao.",
     {
@@ -545,8 +614,8 @@ export function createMcpServer(projectRoot, teamManager) {
       readPaths: z.array(z.string()).optional().default([]),
       writePaths: z.array(z.string()).optional().default([]),
       lockPolicy: z.enum(["wait", "reject"]).optional().default("wait"),
-      timeoutMs: z.number().int().positive().max(600_000).optional(),
-      estimatedDurationMs: z.number().int().positive().max(600_000).optional(),
+      timeoutMs: z.number().int().positive().max(LONG_TASK_TIMEOUT_MS).optional(),
+      estimatedDurationMs: z.number().int().positive().max(LONG_TASK_TIMEOUT_MS).optional(),
       intelligenceMode: z.enum(["always", "auto", "off"]).optional().default("always")
     },
     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -561,7 +630,7 @@ export function createMcpServer(projectRoot, teamManager) {
       teamId: z.string(),
       tasks: z.array(workerTaskDefinitionSchema).min(1).max(30),
       wait: z.boolean().optional().default(false),
-      waitTimeoutMs: z.number().int().positive().max(300_000).optional().default(120_000)
+      waitTimeoutMs: z.number().int().positive().max(MAX_WORKER_WAIT_TIMEOUT_MS).optional().default(MAX_WORKER_WAIT_TIMEOUT_MS)
     },
     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     (input) => teamManager.runParallelTasks(input)
@@ -622,7 +691,7 @@ export function createMcpServer(projectRoot, teamManager) {
       readPaths: z.array(z.string()).optional().default([]),
       writePaths: z.array(z.string()).optional().default([]),
       lockPolicy: z.enum(["wait", "reject"]).optional().default("wait"),
-      timeoutMs: z.number().int().positive().max(600_000).optional(),
+      timeoutMs: z.number().int().positive().max(LONG_TASK_TIMEOUT_MS).optional(),
       intelligenceMode: z.enum(["always", "auto", "off"]).optional().default("always")
     },
     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -644,7 +713,7 @@ export function createMcpServer(projectRoot, teamManager) {
     "Espera ate as tarefas informadas terminarem ou ate o limite de espera.",
     {
       taskIds: z.array(z.string()).min(1).max(100),
-      timeoutMs: z.number().int().positive().max(300_000).optional().default(120_000),
+      timeoutMs: z.number().int().positive().max(MAX_WORKER_WAIT_TIMEOUT_MS).optional().default(MAX_WORKER_WAIT_TIMEOUT_MS),
       pollMs: z.number().int().positive().max(5000).optional().default(50)
     },
     { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },

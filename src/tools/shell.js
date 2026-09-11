@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import os from "node:os";
 import { performance } from "node:perf_hooks";
 import { resolveInsideProject } from "./path-utils.js";
+import { MAX_SHELL_TIMEOUT_MS } from "../timeouts.js";
 
 function getShellCommand(command) {
   if (os.platform() === "win32") {
@@ -19,7 +20,8 @@ function getShellCommand(command) {
 
 export async function runShellCommand(input, { projectRoot }) {
   const cwd = resolveInsideProject(projectRoot, input.cwd || ".");
-  const timeoutMs = input.timeoutMs ?? 30_000;
+  // A chamada interna segue o mesmo padrao maximo anunciado pela tool MCP.
+  const timeoutMs = input.timeoutMs ?? MAX_SHELL_TIMEOUT_MS;
   const startedAt = performance.now();
   const shellCommand = getShellCommand(input.command);
 

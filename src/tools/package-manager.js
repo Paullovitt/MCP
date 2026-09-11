@@ -1,5 +1,6 @@
 import { runShellCommand } from "./shell.js";
 import os from "node:os";
+import { MAX_SHELL_TIMEOUT_MS } from "../timeouts.js";
 
 function quoteShellArg(value) {
   const text = String(value);
@@ -24,7 +25,8 @@ export async function npmInstall(input = {}, { projectRoot }) {
     {
       command,
       cwd: input.cwd || ".",
-      timeoutMs: input.timeoutMs ?? 300_000
+      // Preserva prazos explicitos e usa o teto da tool quando eles forem omitidos.
+      timeoutMs: input.timeoutMs ?? MAX_SHELL_TIMEOUT_MS
     },
     { projectRoot }
   );

@@ -106,6 +106,7 @@ Quando `PUBLIC_MCP_URL` estiver configurada, o terminal mostra a URL e o status 
 ## Modulos principais
 
 - `src/index.js`: compoe configuracao, logger, servidor HTTP, tunel e coordenador;
+- `src/timeouts.js`: centraliza os tetos usados como padrao na configuracao, tools e coordenador;
 - `src/mcp-server.js`: publica tools MCP, OAuth, health check e interface na porta unica;
 - `src/ui-server.js` e `src/public/`: entregam o painel restrito ao host local;
 - `src/workers/team-manager.js`: gerencia equipes, dependencias, scheduler, filas, processos, bloqueios e recuperacao;
@@ -135,6 +136,8 @@ Esse arquivo e ignorado pelo Git. Os campos principais sao:
   "SERVER_PORT": 4194,
   "MCP_PORT": 4194,
   "WORKER_COUNT": 3,
+  "WORKER_TASK_TIMEOUT_MS": 86400000,
+  "FILE_LOCK_TTL_MS": 30000,
   "OAUTH_ACCESS_TOKEN_TTL_SECONDS": 31536000,
   "OAUTH_REFRESH_TOKEN_TTL_SECONDS": 63072000,
   "PUBLIC_MCP_URL": null
@@ -185,6 +188,7 @@ O servidor implementa descoberta OAuth, registro dinamico de cliente, authorizat
 ## Tools de coordenacao
 
 - `create_worker_team`
+- `run_shell_background`
 - `assign_worker_task`
 - `run_parallel_tasks`
 - `get_team_status`
@@ -197,6 +201,51 @@ O servidor implementa descoberta OAuth, registro dinamico de cliente, authorizat
 - `close_worker_team`
 
 Cada equipe possui exatamente tres processos Node independentes.
+
+## Comandos longos sem o limite pratico de 120 segundos
+
+`run_shell` continua sincrono e deve ser usado para comandos que normalmente terminam em ate 90 segundos. Embora aceite ate 10 minutos, a chamada pode expirar no cliente MCP antes do processo local.
+
+Para treino, build, instalacao ou outro processo demorado, use `run_shell_background`. A tool responde imediatamente com `teamId`, `workerId` e `taskId`; o worker continua executando por ate 24 horas. Tarefas comuns dos workers tambem usam 24 horas por padrao, sem precisar informar `timeoutMs`.
+
+```json
+{
+  "projectPath": "C:\\caminho\\do\\projeto",
+  "command": "python treinar.py",
+  "cwd": ".",
+  "timeoutMs": 86400000,
+  "mutatesFiles": true,
+  "writePaths": ["resultados", "checkpoints"]
+}
+```
+
+Consulte com `get_worker_result`, acompanhe a saida com `get_worker_logs` e interrompa com `cancel_worker_task`. Comandos mutantes continuam exigindo `writePaths`, e a validacao automatica de Code Intelligence permanece ativa por padrao.
+
+### Tempos padrao no maximo
+
+| Operacao | Padrao quando o prazo e omitido | Teto aceito pela tool |
+| --- | --- | --- |
+| Tarefa de worker, inclusive em lotes e instrucoes seguintes | 24 horas | 24 horas por tarefa |
+| `run_shell_background` | 24 horas | 24 horas |
+| `run_shell` e `npm_install` diretos | 10 minutos | 10 minutos |
+| `run_tests` direto | 5 minutos | 5 minutos |
+| `wait_for_worker_tasks` e espera de `run_parallel_tasks` | 5 minutos | 5 minutos por chamada |
+
+Um `timeoutMs` explicito menor continua sendo respeitado. A espera de resultados nao cancela uma tarefa: ao expirar, retorna o estado atual. O timeout da execucao cancela a operacao; comandos dos workers encerram sua arvore de processos. Estes valores limitam a execucao, nao a duracao total da equipe nem o tempo em fila.
+
+Em instalacoes existentes, `data/config.json` preserva o prazo escolhido: use `WORKER_TASK_TIMEOUT_MS: 86400000` para ativar o maximo e reinicie o MCP. Tarefas ja atribuidas mantem o prazo gravado no momento da atribuicao. Novas instalacoes ja recebem 24 horas por padrao.
+
+Prazos maiores toleram operacoes demoradas, mas tambem demoram mais a interromper comandos travados. Para acompanhar comandos longos, prefira a tool em segundo plano: aumentar o prazo local nao altera limites de espera do cliente MCP ou do tunel.
+
+Os tempos internos de protecao permanecem independentes: Language Server (15 segundos por requisicao), inicializacao de worker (8 segundos), locks (30 segundos, renovados a cada 10 segundos), limpeza de historico (12 horas) e validade OAuth nao foram ampliados.
+
+### Testes dos limites
+
+```powershell
+npm test
+```
+
+`test/timeouts.test.js` verifica schemas pelo protocolo MCP, configuracao, execucao com tres workers, espera sem cancelamento, cancelamento explicito, timeout e regressao de escrita. Os testes usam diretorios temporarios e SQLite isolado, removidos ao finalizar. Os valores de 24 horas sao verificados sem esperar um dia; a interrupcao real e exercitada com prazos curtos.
 
 ## Tools de Code Intelligence
 
@@ -382,7 +431,7 @@ Executar tres tarefas independentes em paralelo:
     {
       "operation": "run_tests",
       "params": { "cwd": ".", "command": "npm test" },
-      "timeoutMs": 120000
+      "timeoutMs": 86400000
     }
   ]
 }

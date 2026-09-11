@@ -6,6 +6,7 @@ import { CoordinatorStore, TERMINAL_TASK_STATES } from "../storage/sqlite-store.
 import { CodeIntelligenceEngine } from "../code-intelligence/engine.js";
 import { AutomaticIntelligenceValidator } from "../code-intelligence/automatic-validator.js";
 import { findSnapshotChanges, snapshotPaths } from "./file-state.js";
+import { MAX_WORKER_TASK_TIMEOUT_MS, MAX_WORKER_WAIT_TIMEOUT_MS } from "../timeouts.js";
 
 const SUPPORTED_OPERATIONS = new Set([
   "read_file",
@@ -48,6 +49,7 @@ const DEFAULT_OPERATION_ESTIMATES_MS = {
 };
 
 const PROJECT_HISTORY_CLEANUP_INTERVAL_MS = 12 * 60 * 60 * 1000;
+const MAX_TASK_ESTIMATE_MS = MAX_WORKER_TASK_TIMEOUT_MS;
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -67,7 +69,7 @@ function errorObject(code, message, details = null) {
 }
 
 export class WorkerTeamManager {
-  constructor({ projectRoot, databasePath, logger, workerCount = 3, defaultTimeoutMs = 120_000, lockTtlMs = 30_000, codeIntelligenceEngine, defaultIntelligenceMode = "always" }) {
+  constructor({ projectRoot, databasePath, logger, workerCount = 3, defaultTimeoutMs = MAX_WORKER_TASK_TIMEOUT_MS, lockTtlMs = 30_000, codeIntelligenceEngine, defaultIntelligenceMode = "always" }) {
     this.projectRoot = path.resolve(projectRoot);
     this.databasePath = databasePath || path.join(this.projectRoot, "data", "coordinator.sqlite");
     this.logger = logger;
@@ -486,8 +488,8 @@ export class WorkerTeamManager {
   estimateDuration(operation, params = {}, explicitEstimate) {
     if (explicitEstimate !== undefined && explicitEstimate !== null) {
       const estimate = Math.round(Number(explicitEstimate));
-      if (!Number.isFinite(estimate) || estimate < 1 || estimate > 600_000) {
-        throw new Error("estimatedDurationMs deve estar entre 1 e 600000.");
+      if (!Number.isFinite(estimate) || estimate < 1 || estimate > MAX_TASK_ESTIMATE_MS) {
+        throw new Error(`estimatedDurationMs deve estar entre 1 e ${MAX_TASK_ESTIMATE_MS}.`);
       }
       return estimate;
     }
@@ -604,7 +606,7 @@ export class WorkerTeamManager {
     return this.store.getTask(task.id);
   }
 
-  async runParallelTasks({ teamId, tasks, wait = false, waitTimeoutMs = 120_000 }) {
+  async runParallelTasks({ teamId, tasks, wait = false, waitTimeoutMs = MAX_WORKER_WAIT_TIMEOUT_MS }) {
     return this.serializeMutation(async () => {
       const team = this.store.getTeam(teamId);
       if (!team || team.status !== "ativo") throw new Error("Equipe inexistente ou inativa.");
@@ -954,7 +956,8 @@ export class WorkerTeamManager {
         }
       });
     }
-    if (status === "concluido" && message.finishedAt && (message.startedAt || task.startedAt)) {
+    // Uma execucao longa declarada nao deve distorcer a EWMA usada para distribuir comandos curtos.
+    if (status === "concluido" && !task.scheduler?.longRunning && message.finishedAt && (message.startedAt || task.startedAt)) {
       this.store.recordOperationDuration(task.operation, message.finishedAt - (message.startedAt || task.startedAt));
     }
 
@@ -1077,7 +1080,8 @@ export class WorkerTeamManager {
     return { messageId, followupTask };
   }
 
-  async waitForTasks({ taskIds, timeoutMs = 120_000, pollMs = 50 }) {
+  // O prazo limita apenas esta consulta: tarefas continuam ate seu proprio timeout.
+  async waitForTasks({ taskIds, timeoutMs = MAX_WORKER_WAIT_TIMEOUT_MS, pollMs = 50 }) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() <= deadline) {
       const tasks = taskIds.map((taskId) => this.store.getTask(taskId)).filter(Boolean);
